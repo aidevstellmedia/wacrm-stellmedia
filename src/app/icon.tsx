@@ -22,7 +22,7 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#7c3aed", // primary (Hostinger-aligned purple)
+          background: "#4d2971", // primary (Stell Media brand)
           borderRadius: 6,
         }}
       >

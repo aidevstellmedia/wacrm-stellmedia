@@ -147,18 +147,35 @@ html[data-mode="light"] {
 
 /* ---- ACCENT: primary color ---- */
 
+/* Violet = Stell Media brand (#4d2971). Dark mode uses a lighter tint of
+ * the same hue so primary text/accents stay >= 4.5:1 on dark surfaces,
+ * with a dark foreground on filled primary for the same reason. `:root`
+ * carries the dark defaults (matches the :root dark-mode surfaces). */
 :root,
-html[data-theme="violet"] {
-  --primary: oklch(0.526 0.247 293);
-  --primary-foreground: oklch(0.985 0 0);
-  --primary-hover: oklch(0.6 0.22 293);
-  --primary-soft: oklch(0.526 0.247 293 / 0.12);
-  --primary-soft-2: oklch(0.526 0.247 293 / 0.2);
-  --ring: oklch(0.526 0.247 293);
-  --chart-1: oklch(0.526 0.247 293);
-  --sidebar-primary: oklch(0.526 0.247 293);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.526 0.247 293);
+html[data-theme="violet"][data-mode="dark"] {
+  --primary: #9f74d1;
+  --primary-foreground: #0b0d12;
+  --primary-hover: #b08ae0;
+  --primary-soft: rgb(159 116 209 / 0.16);
+  --primary-soft-2: rgb(159 116 209 / 0.26);
+  --ring: #9f74d1;
+  --chart-1: #9f74d1;
+  --sidebar-primary: #9f74d1;
+  --sidebar-primary-foreground: #0b0d12;
+  --sidebar-ring: #9f74d1;
+}
+
+html[data-theme="violet"][data-mode="light"] {
+  --primary: #4d2971;
+  --primary-foreground: #ffffff;
+  --primary-hover: #43235f;
+  --primary-soft: #f1ebf7;
+  --primary-soft-2: #e4d8ef;
+  --ring: #4d2971;
+  --chart-1: #4d2971;
+  --sidebar-primary: #4d2971;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #4d2971;
 }
 
 html[data-theme="emerald"] {
