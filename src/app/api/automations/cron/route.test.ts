@@ -5,10 +5,13 @@ const h = vi.hoisted(() => ({
   due: [] as Record<string, unknown>[],
   claims: [] as string[],
   resumed: [] as string[],
+  suspendedIds: [] as string[],
+  notCalls: [] as unknown[][],
 }));
 
 vi.mock("@/lib/platform/tenant-status", () => ({
   isTenantActive: async (id: string) => h.active[id] ?? true,
+  listSuspendedAccountIds: async () => h.suspendedIds,
 }));
 
 vi.mock("@/lib/automations/engine", () => ({
@@ -38,6 +41,10 @@ vi.mock("@/lib/automations/admin-client", () => ({
         if (k === "id") id = v;
         return q;
       };
+      q.not = (...args: unknown[]) => {
+        h.notCalls.push(args);
+        return q;
+      };
       q.lte = chain;
       q.order = chain;
       q.limit = () => Promise.resolve({ data: h.due, error: null });
@@ -65,6 +72,8 @@ beforeEach(() => {
   h.due = [];
   h.claims = [];
   h.resumed = [];
+  h.suspendedIds = [];
+  h.notCalls = [];
 });
 
 describe("automations cron — soft suspend", () => {
@@ -74,5 +83,16 @@ describe("automations cron — soft suspend", () => {
     expect((await res.json()).processed).toBe(1);
     expect(h.claims).toEqual(["p2"]);
     expect(h.resumed).toEqual(["p2"]);
+  });
+
+  it("excludes suspended accounts in the query when any exist", async () => {
+    h.suspendedIds = ["acc-s"];
+    await GET(new Request("https://x/api/automations/cron", { headers: { "x-cron-secret": "s3cret" } }));
+    expect(h.notCalls).toEqual([["account_id", "in", "(acc-s)"]]);
+  });
+
+  it("adds no exclusion filter when nothing is suspended", async () => {
+    await GET(new Request("https://x/api/automations/cron", { headers: { "x-cron-secret": "s3cret" } }));
+    expect(h.notCalls).toHaveLength(0);
   });
 });

@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { expireAwaitingReplies, resumePendingExecution } from '@/lib/automations/engine'
-import { isTenantActive } from '@/lib/platform/tenant-status'
+import { isTenantActive, listSuspendedAccountIds } from '@/lib/platform/tenant-status'
 import type { AutomationContext } from '@/lib/automations/engine'
 
 /**
@@ -37,11 +37,19 @@ export async function GET(request: Request) {
   const expired = await expireAwaitingReplies()
 
   const admin = supabaseAdmin()
-  const { data: due, error } = await admin
+  // Exclude suspended workspaces in the query itself: their parked rows
+  // keep old run_at values and would otherwise fill the batch and starve
+  // every other tenant. The per-row check below stays as a backstop.
+  const suspendedIds = await listSuspendedAccountIds()
+  let dueQuery = admin
     .from('automation_pending_executions')
     .select('*')
     .eq('status', 'pending')
     .lte('run_at', new Date().toISOString())
+  if (suspendedIds.length > 0) {
+    dueQuery = dueQuery.not('account_id', 'in', `(${suspendedIds.join(',')})`)
+  }
+  const { data: due, error } = await dueQuery
     .order('run_at', { ascending: true })
     .limit(50)
 

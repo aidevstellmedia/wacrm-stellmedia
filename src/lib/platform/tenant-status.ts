@@ -23,6 +23,14 @@ export interface StatusClient {
   };
 }
 
+export interface SuspendedListClient {
+  from(table: "tenant_settings"): {
+    select(cols: string): {
+      eq(col: string, v: string): PromiseLike<{ data: { account_id: string }[] | null; error: unknown }>;
+    };
+  };
+}
+
 const cache = new TtlCache<boolean>(30_000);
 
 export async function isTenantActive(accountId: string, db?: StatusClient): Promise<boolean> {
@@ -37,6 +45,17 @@ export async function isTenantActive(accountId: string, db?: StatusClient): Prom
   const active = !data || data.status !== "suspended";
   cache.set(accountId, active);
   return active;
+}
+
+/** Ids of all suspended accounts. On error logs and returns [] (fail open). */
+export async function listSuspendedAccountIds(db?: SuspendedListClient): Promise<string[]> {
+  const client = db ?? (platformAdmin() as unknown as SuspendedListClient);
+  const { data, error } = await client.from("tenant_settings").select("account_id").eq("status", "suspended");
+  if (error) {
+    console.error("[platform] suspended tenant list failed:", error);
+    return [];
+  }
+  return (data ?? []).map((r) => r.account_id);
 }
 
 export async function assertTenantActive(accountId: string, db?: StatusClient): Promise<void> {
