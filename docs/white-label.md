@@ -41,7 +41,7 @@ Restart `npm run dev` after any env change. Browse to `http://admin.localhost:30
 
 ### 3. Allow local auth redirects
 
-Local Supabase only redirects to allowed URLs. `supabase/config.toml` currently has no `[auth]` section, so add one (local only; do not commit it if you do not want to change CI behaviour):
+Local Supabase only redirects to allowed URLs. `supabase/config.toml` is a CI-only file; its header says it does not mirror the hosted project's settings and it currently has no `[auth]` section. Add one for local use, but keep these edits uncommitted (otherwise CI behaviour changes and hosted settings get a second source of truth):
 
 ```toml
 [auth]
@@ -66,11 +66,21 @@ on conflict do nothing;
 
 Then sign in at `http://admin.localhost:3000`.
 
-### 5. Invite emails (Inbucket)
+### 5. Create the Stell Media client
+
+On a fresh local database the migration backfill did not run for your user, so no `stellmedia` client or `stellmedia.localhost` domain exists yet. Create it:
+
+1. Open `http://admin.localhost:3000/admin` and choose **New client**.
+2. Slug `stellmedia`, company name `Stell Media`, upload the logo (e.g. `~/Downloads/stellmedia-logo.webp`; WebP is accepted, max 512 KB), and set the owner name and email.
+3. The owner email must be a different address from your platform-admin user: one user belongs to one client, so the platform admin cannot also be that client's member. Any test address works locally.
+4. Provisioning registers the host `<slug>.<PLATFORM_BASE_DOMAIN>` (`tenantSubdomainHost` in `src/lib/platform/config.ts`), so with `PLATFORM_BASE_DOMAIN=localhost` the client is served at `stellmedia.localhost`.
+5. Read the invite in Inbucket (next section), click the link and set the password on `http://stellmedia.localhost:3000`.
+
+### 6. Invite emails (Inbucket)
 
 Local Supabase sends no real email. Open Inbucket at <http://127.0.0.1:54324>, find the invite or password-reset message and click its link.
 
-For the link to land on the client's host with a working session, the invite and recovery templates must use the `token_hash` form (see "Supabase Auth" below). Locally, set them in `supabase/config.toml` with a `content_path` HTML file:
+For the link to land on the client's host with a working session, the invite and recovery templates must use the `token_hash` form. Locally, set them in `supabase/config.toml` with a `content_path` HTML file (the hosted project uses the same link markup, set in the dashboard; see "Supabase Auth" below):
 
 ```toml
 [auth.email.template.invite]
@@ -122,7 +132,7 @@ Create these A records pointing at the VPS IP:
   <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=invite">Accept invitation</a>
   ```
 
-  Why: admin-created invites carry no PKCE verifier, and `redirectTo` already contains `?next=`, which is why `&` is correct.
+  (The local equivalent is in "Local development" step 6.) Why: admin-created invites carry no PKCE verifier, and `redirectTo` already contains `?next=`, which is why `&` is correct.
 - Set the **Reset password** template to:
 
   ```html
@@ -162,7 +172,7 @@ PLATFORM_NAME=Stell Media CRM
 
 1. Sign in at `https://admin.crm.stellmedia.com` as a platform admin.
 2. Create a client: name and slug (2-40 chars, lowercase letters/digits/hyphens; `admin`, `www`, `app`, `api` are reserved) and the first admin's email. This provisions the account and sends the invite.
-3. Optionally set branding (name, logo, favicon, colours) for the client.
+3. If the client shows status `incomplete`, its page opens on **Complete setup**: enter the company name and slug to finish provisioning. After that the page shows **Branding**, where you can change the company name, logo and favicon.
 4. The client opens the invite email and sets a password; they land on `https://<slug>.crm.stellmedia.com`.
 5. For a custom domain, add the DNS record and an NPM proxy host with its certificate, then register the hostname on the client in the admin panel.
 

@@ -95,7 +95,7 @@ export function ResponseTimeChart({
             index="day"
             categories={[CATEGORY]}
             // 'violet' maps to Tailwind's `fill-violet-500` — matches
-            // the brand accent the hand-rolled bars used (#7c3aed).
+            // the brand accent the hand-rolled bars used (#4d2971).
             colors={['violet']}
             valueFormatter={(value) => `${value.toFixed(1)}m`}
             showLegend={false}

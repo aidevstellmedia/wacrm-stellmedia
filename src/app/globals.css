@@ -169,8 +169,8 @@ html[data-theme="violet"][data-mode="light"] {
   --primary: #4d2971;
   --primary-foreground: #ffffff;
   --primary-hover: #43235f;
-  --primary-soft: #f1ebf7;
-  --primary-soft-2: #e4d8ef;
+  --primary-soft: rgb(77 41 113 / 0.1);
+  --primary-soft-2: rgb(77 41 113 / 0.18);
   --ring: #4d2971;
   --chart-1: #4d2971;
   --sidebar-primary: #4d2971;
