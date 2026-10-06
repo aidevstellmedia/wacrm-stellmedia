@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { BrandMark, useBranding } from "@/lib/platform/branding-context";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MessageSquare, UsersRound } from "lucide-react";
+import { UsersRound } from "lucide-react";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -37,6 +38,7 @@ function LoginPageInner() {
   // page to accept rather than to /dashboard.
   const inviteToken = searchParams.get("invite");
   const t = useTranslations("LoginPage");
+  const branding = useBranding();
   // Set by /auth/callback when an emailed link (confirmation, password
   // reset) could not be turned into a session — see src/lib/auth/callback.ts.
   const linkError = searchParams.get("error");
@@ -89,11 +91,13 @@ function LoginPageInner() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <div className="mb-2 flex h-12 items-center justify-center">
             {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                <UsersRound className="h-6 w-6 text-primary" />
+              </div>
             ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
+              <BrandMark size="lg" />
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
@@ -165,6 +169,7 @@ function LoginPageInner() {
             </Button>
           </form>
 
+          {branding.signupEnabled && (
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {t('noAccount')}{" "}
             <Link
@@ -178,6 +183,7 @@ function LoginPageInner() {
               {t('createAccount')}
             </Link>
           </p>
+          )}
         </CardContent>
       </Card>
     </div>

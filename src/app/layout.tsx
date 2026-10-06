@@ -4,6 +4,8 @@ import { getLocale, getMessages } from 'next-intl/server';
 import { Inter } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
+import { getTenantBranding } from "@/lib/platform/branding-server";
+import { BrandingProvider } from "@/lib/platform/branding-context";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { ThemedToaster } from "@/components/themed-toaster";
 import {
@@ -20,18 +22,11 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "wacrm",
-    template: "%s — wacrm",
-  },
+const BASE_METADATA: Metadata = {
   description: "Self-hostable CRM template for WhatsApp.",
   robots: {
     index: false,
     follow: false,
-  },
-  icons: {
-    icon: [{ url: "/icon" }],
   },
   formatDetection: {
     email: false,
@@ -39,6 +34,18 @@ export const metadata: Metadata = {
     telephone: false,
   },
 };
+
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getTenantBranding();
+  return {
+    ...BASE_METADATA,
+    title: {
+      default: branding.displayName,
+      template: `%s — ${branding.displayName}`,
+    },
+    icons: { icon: [{ url: branding.faviconUrl ?? "/icon" }] },
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: "#020617",
@@ -84,6 +91,7 @@ export default async function RootLayout({
 }>) {
   const locale = await getLocale();
   const messages = await getMessages();
+  const branding = await getTenantBranding();
 
   return (
     <html
@@ -110,7 +118,7 @@ export default async function RootLayout({
       <body className="min-h-full bg-background text-foreground font-sans">
         <NextIntlClientProvider messages={messages} locale={locale}>
           <ThemeProvider>
-            {children}
+            <BrandingProvider value={branding}>{children}</BrandingProvider>
             <ThemedToaster />
           </ThemeProvider>
         </NextIntlClientProvider>
