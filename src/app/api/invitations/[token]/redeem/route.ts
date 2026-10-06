@@ -100,6 +100,7 @@ export async function POST(
         { status: 503 },
       );
     }
+    // inv null: fall through; the RPC rejects unknown tokens itself.
     if (inv && inv.account_id !== tenantId) {
       return NextResponse.json(
         { error: "This invitation belongs to a different workspace." },
