@@ -18,6 +18,9 @@ let mockProfileAccountId: string | null = null;
 // lookup fail with a DB error instead of returning data.
 let mockRpcError = false;
 let mockProfileError = false;
+// `mockSignOutError` — signOut() fails (auth-js returns {error} and keeps
+// the session on 5xx/network errors).
+let mockSignOutError = false;
 const signOutSpy = vi.fn();
 
 vi.mock("@supabase/ssr", () => ({
@@ -34,8 +37,9 @@ vi.mock("@supabase/ssr", () => ({
         if (refreshedCookies.length) opts.cookies.setAll(refreshedCookies);
         return { data: { user: mockUser } };
       },
-      signOut: async () => {
-        signOutSpy();
+      signOut: async (options?: { scope?: string }) => {
+        signOutSpy(options);
+        if (mockSignOutError) return { error: { message: "x" } };
         opts.cookies.setAll([{ name: "sb-test-auth-token", value: "", options: { maxAge: 0 } }]);
         return { error: null };
       },
@@ -73,6 +77,7 @@ beforeEach(() => {
   mockProfileAccountId = null;
   mockRpcError = false;
   mockProfileError = false;
+  mockSignOutError = false;
   __resetTenantLookupCachesForTests();
   delete process.env.PLATFORM_BASE_DOMAIN;
   delete process.env.ADMIN_HOSTNAME;
@@ -225,11 +230,47 @@ describe("middleware — white-label platform mode", () => {
     mockTenants["acme.crm.stellmedia.com"] = ACME;
     mockUser = { id: "u-other" };
     mockProfileAccountId = "acc-other";
+    refreshedCookies = [ROTATED];
     const res = await middleware(platformRequest("https://acme.crm.stellmedia.com/dashboard"));
-    expect(signOutSpy).toHaveBeenCalled();
+    expect(signOutSpy).toHaveBeenCalledWith({ scope: "local" });
     const loc = new URL(res.headers.get("location")!);
     expect(loc.pathname).toBe("/login");
     expect(loc.searchParams.get("error")).toBe("wrong_workspace");
+    // signOut's cleared cookie (not the rotated token) must reach the redirect.
+    expect(res.cookies.get("sb-test-auth-token")?.value).toBe("");
+  });
+
+  it("returns 403 JSON wrong_workspace for an API of another tenant", async () => {
+    platformOn();
+    mockTenants["acme.crm.stellmedia.com"] = ACME;
+    mockUser = { id: "u-other" };
+    mockProfileAccountId = "acc-other";
+    const res = await middleware(platformRequest("https://acme.crm.stellmedia.com/api/account/members"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "wrong_workspace" });
+    expect(signOutSpy).toHaveBeenCalledWith({ scope: "local" });
+  });
+
+  it("returns 503 (no redirect loop) when sign-out of a wrong-workspace user fails", async () => {
+    platformOn();
+    mockTenants["acme.crm.stellmedia.com"] = ACME;
+    mockUser = { id: "u-other" };
+    mockProfileAccountId = "acc-other";
+    mockSignOutError = true;
+    const res = await middleware(platformRequest("https://acme.crm.stellmedia.com/dashboard"));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("rewrites /admin on a tenant host to /workspace-not-found", async () => {
+    platformOn();
+    mockTenants["acme.crm.stellmedia.com"] = ACME;
+    mockUser = { id: "u1" };
+    mockProfileAccountId = "acc-acme";
+    for (const path of ["/admin", "/admin/tenants"]) {
+      const res = await middleware(platformRequest(`https://acme.crm.stellmedia.com${path}`));
+      expect(res.headers.get("x-middleware-rewrite")).toContain("/workspace-not-found");
+    }
   });
 
   it("does NOT sign out a not-yet-joined invitee on /join and /auth/callback", async () => {
@@ -282,6 +323,7 @@ describe("middleware — white-label platform mode", () => {
     const res = await middleware(platformRequest("https://acme.crm.stellmedia.com/dashboard"));
     expect(res.status).toBe(503);
     expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 

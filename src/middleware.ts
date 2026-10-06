@@ -98,8 +98,8 @@ export async function middleware(request: NextRequest) {
   const serviceUnavailable = () =>
     withRefreshedCookies(
       isApi
-        ? NextResponse.json({ error: 'service_unavailable' }, { status: 503 })
-        : new NextResponse('Service temporarily unavailable', { status: 503 })
+        ? NextResponse.json({ error: 'service_unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+        : new NextResponse('Service temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } })
     )
 
   // ---------------- White-label platform layer ----------------
@@ -113,6 +113,11 @@ export async function middleware(request: NextRequest) {
     if (user && (pathname === '/login' || protectedPaths.some(p => pathname.startsWith(p)))) {
       return redirectTo('/admin')
     }
+  }
+
+  // Defence in depth: the admin panel only exists on the admin host.
+  if (kind === 'lookup' && (pathname === '/admin' || pathname.startsWith('/admin/'))) {
+    return rewriteTo('/workspace-not-found')
   }
 
   if (kind === 'lookup') {
@@ -161,7 +166,11 @@ export async function middleware(request: NextRequest) {
         throw err
       }
       if (accountId !== tenant!.accountId) {
-        await supabase.auth.signOut()
+        // Local scope: a wrong-host visit must not revoke the user's
+        // sessions on their own workspace. If sign-out fails the session
+        // survives, and redirecting to /login would loop — fail closed.
+        const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
+        if (signOutError) return serviceUnavailable()
         if (isApi) return withRefreshedCookies(NextResponse.json({ error: 'wrong_workspace' }, { status: 403 }))
         return redirectTo('/login', { error: 'wrong_workspace' })
       }
