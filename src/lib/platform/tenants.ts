@@ -68,7 +68,8 @@ async function uploadBranding(accountId: string, kind: "logo" | "favicon", file:
   return path;
 }
 
-async function findUserIdByEmail(email: string): Promise<string | null> {
+async function findUserIdByEmail(rawEmail: string): Promise<string | null> {
+  const email = rawEmail.trim().toLowerCase();
   // profiles.email is filled by handle_new_user; avoids paging auth.admin.listUsers.
   const { data, error } = await db().from("profiles").select("user_id").eq("email", email).maybeSingle();
   if (error) throw new Error(error.message);
@@ -90,26 +91,40 @@ export async function completeTenantSetup(
   input: { companyName: string; slug: string; logo: BrandingFile; favicon: BrandingFile },
 ): Promise<void> {
   const cfg = readPlatformConfig();
+  const taken = () => new PlatformError(`The address "${input.slug}" is already taken.`);
   const { error: nameErr } = await db().from("accounts").update({ name: input.companyName }).eq("id", accountId);
-  if (nameErr) throw new PlatformError(nameErr.message);
+  if (nameErr) throw new Error(nameErr.message);
 
   const { data: existingSlug, error: slugErr } = await db()
     .from("tenant_settings").select("account_id").eq("slug", input.slug).maybeSingle();
   if (slugErr) throw new Error(slugErr.message);
-  if (existingSlug && existingSlug.account_id !== accountId) throw new PlatformError(`The address "${input.slug}" is already taken.`);
+  if (existingSlug && existingSlug.account_id !== accountId) throw taken();
 
-  const patch: Record<string, unknown> = { account_id: accountId, slug: input.slug };
-  if (input.logo) patch.logo_path = await uploadBranding(accountId, "logo", input.logo.file, input.logo.ext);
-  if (input.favicon) patch.favicon_path = await uploadBranding(accountId, "favicon", input.favicon.file, input.favicon.ext);
-  const { error: setErr } = await db().from("tenant_settings").upsert(patch, { onConflict: "account_id" });
-  if (setErr) throw new PlatformError(setErr.message);
-
+  // Domain first, settings row last: the settings row marks "setup complete",
+  // so a partial failure leaves the account listed as incomplete.
   const hostname = tenantSubdomainHost(cfg, input.slug);
   const { error: domErr } = await db().from("tenant_domains").upsert(
     { account_id: accountId, hostname, kind: "subdomain", verified_at: new Date().toISOString() },
     { onConflict: "hostname", ignoreDuplicates: true },
   );
-  if (domErr) throw new PlatformError(domErr.message);
+  if (domErr) {
+    if (domErr.code === "23505") throw taken();
+    throw new Error(domErr.message);
+  }
+  // ignoreDuplicates no-ops when another account already owns the hostname.
+  const { data: domRow, error: domSelErr } = await db()
+    .from("tenant_domains").select("account_id").eq("hostname", hostname).maybeSingle();
+  if (domSelErr) throw new Error(domSelErr.message);
+  if (!domRow || domRow.account_id !== accountId) throw taken();
+
+  const patch: Record<string, unknown> = { account_id: accountId, slug: input.slug };
+  if (input.logo) patch.logo_path = await uploadBranding(accountId, "logo", input.logo.file, input.logo.ext);
+  if (input.favicon) patch.favicon_path = await uploadBranding(accountId, "favicon", input.favicon.file, input.favicon.ext);
+  const { error: setErr } = await db().from("tenant_settings").upsert(patch, { onConflict: "account_id" });
+  if (setErr) {
+    if (setErr.code === "23505") throw taken();
+    throw new Error(setErr.message);
+  }
 }
 
 export async function createTenant(input: {
@@ -124,6 +139,10 @@ export async function createTenant(input: {
     .from("tenant_settings").select("account_id").eq("slug", input.slug).maybeSingle();
   if (takenErr) throw new Error(takenErr.message);
   if (taken) throw new PlatformError(`The address "${input.slug}" is already taken.`);
+  const { data: takenHost, error: takenHostErr } = await db()
+    .from("tenant_domains").select("account_id").eq("hostname", tenantSubdomainHost(cfg, input.slug)).maybeSingle();
+  if (takenHostErr) throw new Error(takenHostErr.message);
+  if (takenHost) throw new PlatformError(`The address "${input.slug}" is already taken.`);
 
   const redirectTo = `${tenantOrigin(cfg, input.slug)}/auth/callback?next=/reset-password`;
   const { data, error } = await db().auth.admin.inviteUserByEmail(input.ownerEmail, {
@@ -173,26 +192,36 @@ export async function updateTenantBranding(
   accountId: string,
   input: { companyName: string; logo: BrandingFile; favicon: BrandingFile },
 ): Promise<void> {
+  // Check setup first so we don't upload files or rename an incomplete account.
+  const { data: existing, error: existErr } = await db()
+    .from("tenant_settings").select("account_id").eq("account_id", accountId).maybeSingle();
+  if (existErr) throw new Error(existErr.message);
+  if (!existing) throw new PlatformError("Finish setting up this client first.");
+
   const { error: nameErr } = await db().from("accounts").update({ name: input.companyName }).eq("id", accountId);
-  if (nameErr) throw new PlatformError(nameErr.message);
+  if (nameErr) throw new Error(nameErr.message);
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }; // busts the branding cache
   if (input.logo) patch.logo_path = await uploadBranding(accountId, "logo", input.logo.file, input.logo.ext);
   if (input.favicon) patch.favicon_path = await uploadBranding(accountId, "favicon", input.favicon.file, input.favicon.ext);
-  const { error } = await db().from("tenant_settings").update(patch).eq("account_id", accountId);
-  if (error) throw new PlatformError(error.message);
+  const { data, error } = await db().from("tenant_settings").update(patch).eq("account_id", accountId).select("account_id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new PlatformError("Finish setting up this client first.");
 }
 
 export async function setTenantStatus(accountId: string, status: "active" | "suspended"): Promise<void> {
   const now = new Date().toISOString();
-  const { error } = await db()
+  const { data, error } = await db()
     .from("tenant_settings")
     .update({ status, suspended_at: status === "suspended" ? now : null, updated_at: now })
-    .eq("account_id", accountId);
-  if (error) throw new PlatformError(error.message);
+    .eq("account_id", accountId)
+    .select("account_id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new PlatformError("Finish setting up this client first.");
 }
 
 export async function addTenantDomain(accountId: string, hostname: string): Promise<void> {
+  if (hostname === readPlatformConfig().adminHostname) throw new PlatformError("That hostname is reserved.");
   const { error } = await db().from("tenant_domains").insert({ account_id: accountId, hostname, kind: "custom" });
   if (error) {
     if (error.code === "23505") throw new PlatformError("That domain is already in use.");
@@ -200,9 +229,9 @@ export async function addTenantDomain(accountId: string, hostname: string): Prom
   }
 }
 
-export async function removeTenantDomain(domainId: string): Promise<void> {
+export async function removeTenantDomain(accountId: string, domainId: string): Promise<void> {
   const { data: row, error } = await db()
-    .from("tenant_domains").select("id, account_id, kind").eq("id", domainId).maybeSingle();
+    .from("tenant_domains").select("id, account_id, kind").eq("id", domainId).eq("account_id", accountId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!row) throw new PlatformError("Domain not found.");
 
@@ -212,7 +241,7 @@ export async function removeTenantDomain(domainId: string): Promise<void> {
     if (subErr) throw new Error(subErr.message);
     if ((subs ?? []).length <= 1) throw new PlatformError("Cannot remove the client's only platform subdomain.");
   }
-  const { error: delErr } = await db().from("tenant_domains").delete().eq("id", domainId);
+  const { error: delErr } = await db().from("tenant_domains").delete().eq("id", domainId).eq("account_id", accountId);
   if (delErr) throw new Error(delErr.message);
 }
 

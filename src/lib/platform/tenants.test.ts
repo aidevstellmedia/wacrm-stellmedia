@@ -33,7 +33,7 @@ vi.mock("./admin-client", () => ({
   platformAdmin: () => ({ from: builder, auth: { admin: { inviteUserByEmail: invite } } }),
 }));
 
-import { createTenant, PlatformError, removePlatformAdmin, removeTenantDomain } from "./tenants";
+import { addTenantDomain, completeTenantSetup, createTenant, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
 
 beforeEach(() => {
   calls.length = 0;
@@ -70,13 +70,13 @@ describe("removeTenantDomain", () => {
       if (c.op === "select" && c.filters.id === "d1") return { data: { id: "d1", account_id: "a1", kind: "subdomain" } };
       if (c.op === "select") return { data: [{ id: "d1" }] };
     };
-    await expect(removeTenantDomain("d1")).rejects.toThrow(PlatformError);
+    await expect(removeTenantDomain("a1", "d1")).rejects.toThrow(PlatformError);
     expect(calls.some((c) => c.op === "delete")).toBe(false);
   });
 
   it("removes a custom domain", async () => {
     handler = (c) => (c.op === "select" ? { data: { id: "d2", account_id: "a1", kind: "custom" } } : undefined);
-    await removeTenantDomain("d2");
+    await removeTenantDomain("a1", "d2");
     expect(calls.some((c) => c.op === "delete" && c.filters.id === "d2")).toBe(true);
   });
 });
@@ -97,5 +97,53 @@ describe("removePlatformAdmin", () => {
     handler = (c) => (c.op === "select" ? { data: [{ user_id: "u1" }, { user_id: "u2" }] } : undefined);
     await removePlatformAdmin("u1", "u2");
     expect(calls.some((c) => c.op === "delete" && c.filters.user_id === "u2")).toBe(true);
+  });
+});
+
+describe("completeTenantSetup", () => {
+  const setup = { companyName: "Acme", slug: "acme", logo: null, favicon: null };
+
+  it("refuses a hostname owned by another account and writes no settings", async () => {
+    handler = (c) => (c.table === "tenant_domains" && c.op === "select" ? { data: { account_id: "other" } } : undefined);
+    await expect(completeTenantSetup("a1", setup)).rejects.toThrow(/already taken/);
+    expect(calls.some((c) => c.table === "tenant_settings" && c.op === "upsert")).toBe(false);
+  });
+
+  it("converges when re-run for the same account", async () => {
+    handler = (c) => {
+      if (c.table === "tenant_domains" && c.op === "select") return { data: { account_id: "a1" } };
+      if (c.table === "tenant_settings" && c.op === "select") return { data: { account_id: "a1" } };
+    };
+    await completeTenantSetup("a1", setup);
+    const order = calls.filter((c) => c.op === "upsert").map((c) => c.table);
+    expect(order).toEqual(["tenant_domains", "tenant_settings"]);
+  });
+});
+
+describe("setTenantStatus", () => {
+  it("throws when the account has no settings row", async () => {
+    handler = () => ({ data: [] });
+    await expect(setTenantStatus("a1", "suspended")).rejects.toThrow(PlatformError);
+  });
+});
+
+describe("removeTenantDomain scoping", () => {
+  it("treats a domain of another account as not found", async () => {
+    handler = () => ({ data: null });
+    await expect(removeTenantDomain("a2", "d1")).rejects.toThrow("Domain not found.");
+    expect(calls.some((c) => c.op === "delete")).toBe(false);
+    expect(calls[0].filters.account_id).toBe("a2");
+  });
+});
+
+describe("addTenantDomain", () => {
+  it("rejects the admin hostname", async () => {
+    process.env.ADMIN_HOSTNAME = "admin.crm.test.com";
+    try {
+      await expect(addTenantDomain("a1", "admin.crm.test.com")).rejects.toThrow(/reserved/);
+      expect(calls).toHaveLength(0);
+    } finally {
+      delete process.env.ADMIN_HOSTNAME;
+    }
   });
 });
