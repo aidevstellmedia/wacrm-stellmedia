@@ -91,6 +91,17 @@ BEGIN
       'idx_automation_pending_awaiting_reply is missing — migration 043 did not apply';
   END IF;
 
+  -- Platform layer, from 100.
+  IF to_regclass('public.tenant_settings') IS NULL
+     OR to_regclass('public.tenant_domains') IS NULL
+     OR to_regclass('public.platform_admins') IS NULL
+     OR to_regclass('public.platform_audit_log') IS NULL THEN
+    RAISE EXCEPTION 'platform tables missing — 100_platform_tenancy did not apply';
+  END IF;
+  IF to_regprocedure('public.resolve_tenant(text)') IS NULL THEN
+    RAISE EXCEPTION 'public.resolve_tenant(text) missing';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
