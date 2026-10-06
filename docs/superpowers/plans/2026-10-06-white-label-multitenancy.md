@@ -1313,8 +1313,11 @@ export function BrandMark({ size = "sm" }: { size?: "sm" | "lg" }) {
   const { logoUrl, displayName } = useBranding();
   const box = size === "lg" ? "h-12 w-12" : "h-8 w-8";
   if (logoUrl) {
+    // Logos are often wide wordmarks (e.g. Stell Media's is ~3.6:1), so fix
+    // the height and let the width follow, capped.
+    const h = size === "lg" ? "h-12 max-w-[240px]" : "h-8 max-w-[180px]";
     // eslint-disable-next-line @next/next/no-img-element -- arbitrary storage host, tiny image
-    return <img src={logoUrl} alt={displayName} className={`${box} rounded-lg object-contain`} />;
+    return <img src={logoUrl} alt={displayName} className={`${h} w-auto object-contain`} />;
   }
   return (
     <div className={`flex ${box} items-center justify-center rounded-lg bg-primary text-primary-foreground`}>
@@ -1358,10 +1361,13 @@ export async function generateMetadata(): Promise<Metadata> {
 with
 ```tsx
 <BrandMark />
-<span className="truncate text-sm font-semibold text-foreground">
-  {branding.displayName}
-</span>
+{!branding.logoUrl && (
+  <span className="truncate text-sm font-semibold text-foreground">
+    {branding.displayName}
+  </span>
+)}
 ```
+(A logo usually contains the name already, so the text label only shows with the fallback mark.)
 - Add `const branding = useBranding();` next to `const t = useTranslations("Sidebar");`.
 - Import `BrandMark, useBranding` from `@/lib/platform/branding-context`.
 - Remove `MessageSquare` from the lucide import only if it's now unused.
@@ -2286,8 +2292,12 @@ git commit -m "feat(platform): super-admin panel for clients, admins and audit l
 - Modify: `.env.local.example` (new "WHITE-LABEL PLATFORM (optional)" section)
 - Modify (only if the user supplies brand colours): `src/app/globals.css` violet tokens, `src/app/icon.tsx` background colour
 
-- [ ] **Step 1: Ask the user for the Stell Media primary colour (hex)** via AskUserQuestion. If none is given, leave the theme as is and note it in the report. Don't invent a palette. If a hex is given, update `--primary`/`--primary-hover`/`--primary-soft*` in the `html[data-theme="violet"]` blocks (light + dark) of `globals.css`, plus `background` in `src/app/icon.tsx`. Keep contrast with `--primary-foreground` ≥ 4.5:1 (check with any contrast formula), and rename nothing.
-
+- [ ] **Step 1: Apply the Stell Media palette** (user-supplied: primary `#4d2971`).
+In `src/app/globals.css`, update the `html[data-theme="violet"]` token blocks (read the file to find every block — light and dark mode variants):
+  - Light mode: `--primary: #4d2971`, `--primary-hover` a ~8% darker shade (`#43235f`), `--primary-soft` / `--primary-soft-2` light tints of the same hue (e.g. `#f1ebf7` / `#e4d8ef`), `--primary-foreground: #ffffff`, and `--ring` / `--sidebar-primary` if they reference the old violet.
+  - Dark mode: `#4d2971` is too dark to read as text/accents on the dark background — use a lighter tint of the same hue for `--primary` (start at `#9f74d1`, adjust until text-on-background contrast ≥ 4.5:1 and `--primary-foreground` on `--primary` ≥ 4.5:1; compute with the WCAG relative-luminance formula in a quick `node -e` script and paste the ratios in the report).
+  - Keep the theme id `violet` (no rename — upstream compatibility; the picker label may stay).
+  - `src/app/icon.tsx`: background `#4d2971`.
 - [ ] **Step 2: Add the env section** to `.env.local.example`:
 
 ```env
