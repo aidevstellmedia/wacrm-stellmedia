@@ -23,14 +23,14 @@ describe("stripTenantHeaders", () => {
 });
 
 describe("isTenantExemptPath", () => {
-  it.each(["/api/whatsapp/webhook", "/api/v1/contacts", "/auth/callback", "/workspace-suspended", "/workspace-not-found"])(
+  it.each(["/api/whatsapp/webhook", "/api/v1/contacts", "/auth/callback", "/workspace-suspended", "/workspace-not-found", "/api/whatsapp/webhook/x", "/api/v1"])(
     "%s is exempt", (p) => expect(isTenantExemptPath(p)).toBe(true));
-  it.each(["/dashboard", "/login", "/join/abc", "/api/whatsapp/send", "/api/v1x"])(
+  it.each(["/dashboard", "/login", "/join/abc", "/api/whatsapp/send", "/api/v1x", "/api/whatsapp/webhookfoo", "/auth/callbackx", "/workspace-suspendedx"])(
     "%s is not exempt", (p) => expect(isTenantExemptPath(p)).toBe(false));
 });
 
 describe("needsAccountBinding", () => {
-  it.each(["/dashboard", "/inbox/123", "/api/account/members", "/api/whatsapp/send"])(
+  it.each(["/dashboard", "/inbox/123", "/api/account/members", "/api/whatsapp/send", "/API/account/members", "/Dashboard", "/api/invitations"])(
     "%s needs binding", (p) => expect(needsAccountBinding(p, PROTECTED)).toBe(true));
   it.each(["/join/abc", "/auth/callback", "/login", "/signup", "/forgot-password", "/reset-password",
     "/api/invitations/abc/redeem", "/api/whatsapp/webhook", "/api/v1/me"])(

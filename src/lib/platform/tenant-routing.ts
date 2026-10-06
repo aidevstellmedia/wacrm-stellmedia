@@ -12,7 +12,7 @@ export const TENANT_HEADER_HOST = "x-tenant-host";
  *  calls carry their own account, and the error pages must render. */
 const EXEMPT_PREFIXES = [
   "/api/whatsapp/webhook",
-  "/api/v1/",
+  "/api/v1",
   "/auth/callback",
   "/workspace-not-found",
   "/workspace-suspended",
@@ -30,14 +30,15 @@ export function stripTenantHeaders(headers: Headers): Headers {
 }
 
 export function isTenantExemptPath(pathname: string): boolean {
-  return EXEMPT_PREFIXES.some((p) => pathname === p.replace(/\/$/, "") || pathname.startsWith(p));
+  return EXEMPT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
 export function needsAccountBinding(pathname: string, protectedPaths: readonly string[]): boolean {
   if (isTenantExemptPath(pathname)) return false;
   if (NO_BINDING_PREFIXES.some((p) => pathname.startsWith(p))) return false;
-  if (pathname.startsWith("/api/")) return true;
-  return protectedPaths.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const lowerPathname = pathname.toLowerCase();
+  if (lowerPathname.startsWith("/api/")) return true;
+  return protectedPaths.some((p) => lowerPathname === p || lowerPathname.startsWith(`${p}/`));
 }
 
 export function tenantLookupHost(cfg: PlatformConfig, host: string | null): string | null {
