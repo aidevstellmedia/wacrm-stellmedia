@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { assertTenantActive } from '@/lib/platform/tenant-status'
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -50,6 +51,7 @@ export async function loadAccountMetaCredentials(
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
+  await assertTenantActive(accountId)
   return {
     phoneNumberId: config.phone_number_id,
     accessToken: decrypt(config.access_token),

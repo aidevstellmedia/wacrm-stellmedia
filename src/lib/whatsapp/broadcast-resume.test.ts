@@ -9,6 +9,7 @@ import {
   RESUME_MAX_PER_REQUEST,
 } from './broadcast-resume';
 
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => `decrypted:${v}`,
 }));

@@ -45,6 +45,7 @@ const h = vi.hoisted(() => ({
   },
 }))
 
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
 vi.mock('next/server', () => ({
   after: (cb: () => Promise<void> | void) => {
     h.state.afterCallbacks.push(cb)

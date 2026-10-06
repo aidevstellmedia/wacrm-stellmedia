@@ -28,6 +28,7 @@
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isTenantActive } from '@/lib/platform/tenant-status';
 
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { findActiveKeyByHash, touchLastUsed } from '@/lib/api-keys/store';
@@ -92,6 +93,10 @@ export async function requireApiKey(
     // distinguish them on the wire so a probe can't learn whether a
     // key ever existed.
     throw unauthorized();
+  }
+
+  if (!(await isTenantActive(row.account_id))) {
+    throw forbidden('This workspace is suspended. Contact your service provider.');
   }
 
   // Rate-limit per key, before the scope check, so an unauthorized-

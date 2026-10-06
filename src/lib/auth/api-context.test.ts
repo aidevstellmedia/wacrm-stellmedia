@@ -19,6 +19,9 @@ vi.mock("@/lib/api-keys/store", () => ({
   touchLastUsed: (id: string) => touchLastUsed(id),
 }));
 
+let tenantActive = true;
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenantActive }));
+
 // Import AFTER the mocks are registered.
 const { requireApiKey } = await import("./api-context");
 
@@ -45,6 +48,7 @@ function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
 
 beforeEach(() => {
   __resetRateLimitForTests();
+  tenantActive = true;
   findActiveKeyByHash.mockReset();
   touchLastUsed.mockReset();
 });
@@ -94,6 +98,12 @@ describe("requireApiKey", () => {
     expect(ctx.keyId).toBe("key-1");
     expect(ctx.scopes).toEqual(["messages:send"]);
     expect(touchLastUsed).toHaveBeenCalledWith("key-1");
+  });
+
+  it("rejects keys of a suspended workspace with 403", async () => {
+    tenantActive = false;
+    findActiveKeyByHash.mockResolvedValue(row());
+    await expectApiError(requireApiKey(reqWith(`Bearer ${KEY}`)), "forbidden", 403);
   });
 
   it("accepts a bare key without the 'Bearer ' prefix", async () => {

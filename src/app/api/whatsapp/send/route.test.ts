@@ -128,6 +128,7 @@ function makeSupabaseMock() {
 
 let supabaseMock = makeSupabaseMock()
 
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))

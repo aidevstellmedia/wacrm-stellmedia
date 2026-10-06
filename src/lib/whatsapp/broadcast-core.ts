@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { isTenantActive } from '@/lib/platform/tenant-status';
 import {
   parseInternationalPhone,
   phoneVariants,
@@ -120,6 +121,9 @@ export async function createBroadcast(
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
       400
     );
+  }
+  if (!(await isTenantActive(accountId))) {
+    throw new BroadcastError('workspace_suspended', 'This workspace is suspended.', 403);
   }
   const accessToken = decrypt(config.access_token);
 

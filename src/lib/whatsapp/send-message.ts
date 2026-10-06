@@ -35,6 +35,7 @@ import {
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { isTenantActive } from '@/lib/platform/tenant-status';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
@@ -267,6 +268,10 @@ export async function sendMessageToConversation(
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
       400
     );
+  }
+
+  if (!(await isTenantActive(accountId))) {
+    throw new SendMessageError('workspace_suspended', 'This workspace is suspended.', 403);
   }
 
   const accessToken = decrypt(config.access_token);

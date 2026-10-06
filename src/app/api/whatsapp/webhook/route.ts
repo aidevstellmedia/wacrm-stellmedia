@@ -18,6 +18,7 @@ import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { isTenantActive } from '@/lib/platform/tenant-status'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -515,7 +516,7 @@ async function handleStatusUpdate(status: {
   if (msgRow) {
     const conv = msgRow.conversations as { account_id: string } | null
     const accountId = conv?.account_id
-    if (accountId) {
+    if (accountId && (await isTenantActive(accountId))) {
       await dispatchWebhookEvent(
         supabaseAdmin(),
         accountId,
@@ -702,7 +703,7 @@ async function processMessage(
   // the reaction short-circuit below — so a conversation first opened by
   // a reaction still fires the event, and a subscriber always sees the
   // thread open before its first message.received.
-  if (convResult.created) {
+  if (convResult.created && (await isTenantActive(accountId))) {
     await dispatchWebhookEvent(supabaseAdmin(), accountId, 'conversation.created', {
       conversation_id: conversation.id,
       contact_id: contactRecord.id,
@@ -856,6 +857,11 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // White-label soft suspend: keep storing inbound messages, but don't
+  // run bots/automations, call Meta, or deliver customer webhooks
+  // (message.received below) on a suspended workspace's behalf.
+  if (!(await isTenantActive(accountId))) return
 
   // ============================================================
   // Flow runner dispatch.

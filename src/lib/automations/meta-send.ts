@@ -5,6 +5,7 @@ import {
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { assertTenantActive } from '@/lib/platform/tenant-status'
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -152,6 +153,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
+
+  await assertTenantActive(input.accountId)
 
   const accessToken = decrypt(config.access_token)
 
