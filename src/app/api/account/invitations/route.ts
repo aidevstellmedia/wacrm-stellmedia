@@ -27,6 +27,7 @@ import {
   inviteUrl,
 } from "@/lib/auth/invitations";
 import { isAccountRole } from "@/lib/auth/roles";
+import { TENANT_HEADER_HOST } from "@/lib/platform/tenant-routing";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -92,6 +93,19 @@ function isHostAllowed(
 }
 
 function getBaseUrl(request: Request): string {
+  // White-label: on a tenant host, invite links must point at that
+  // tenant's own address. The header is only present when middleware
+  // matched this host to the caller's tenant.
+  if (request.headers.get(TENANT_HEADER_HOST)) {
+    const h =
+      request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+      request.headers.get("host")?.trim();
+    const proto =
+      request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
+      new URL(request.url).protocol.replace(":", "");
+    if (h) return `${proto}://${h}`;
+  }
+
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 

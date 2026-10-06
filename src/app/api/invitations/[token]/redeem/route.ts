@@ -26,6 +26,9 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { platformAdmin } from "@/lib/platform/admin-client";
+import { forgetProfileAccount } from "@/lib/platform/tenant-lookup";
+import { TENANT_HEADER_ID } from "@/lib/platform/tenant-routing";
 import { createClient } from "@/lib/supabase/server";
 
 function getClientIp(request: Request): string {
@@ -81,11 +84,37 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // White-label: an invite to client A must not be redeemable on client
+  // B's host. x-tenant-id is trustworthy — middleware strips/sets it.
+  const tenantId = request.headers.get(TENANT_HEADER_ID);
+  if (tenantId) {
+    const { data: inv, error: invError } = await platformAdmin()
+      .from("account_invitations")
+      .select("account_id")
+      .eq("token_hash", hashInviteToken(token))
+      .maybeSingle();
+    if (invError) {
+      console.error("[redeem] invitation lookup failed:", invError);
+      return NextResponse.json(
+        { error: "Could not verify invitation" },
+        { status: 503 },
+      );
+    }
+    if (inv && inv.account_id !== tenantId) {
+      return NextResponse.json(
+        { error: "This invitation belongs to a different workspace." },
+        { status: 403 },
+      );
+    }
+  }
+
   const { data: accountId, error } = await supabase.rpc("redeem_invitation", {
     p_token_hash: hashInviteToken(token),
   });
 
   if (error) return rpcErrorToResponse(error);
+
+  forgetProfileAccount(user.id);
 
   return NextResponse.json({ ok: true, accountId });
 }
