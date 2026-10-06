@@ -14,7 +14,8 @@
     "noAccount": "¿No tienes una cuenta?",
     "createAccount": "Crear cuenta",
     "linkExpired": "Ese enlace expiró. Para restablecer la contraseña, usa “¿Olvidaste tu contraseña?” y pide uno nuevo; si estabas confirmando tu correo, regístrate de nuevo.",
-    "linkInvalid": "No se pudo iniciar sesión con ese enlace. Si estabas confirmando tu correo, es posible que ya esté verificado; inicia sesión abajo. Para restablecer la contraseña, pide un enlace nuevo y ábrelo en el mismo navegador desde el que lo solicitaste."
+    "linkInvalid": "No se pudo iniciar sesión con ese enlace. Si estabas confirmando tu correo, es posible que ya esté verificado; inicia sesión abajo. Para restablecer la contraseña, pide un enlace nuevo y ábrelo en el mismo navegador desde el que lo solicitaste.",
+    "wrongWorkspace": "Esta cuenta no pertenece a este espacio de trabajo. Inicia sesión en la dirección de tu propio espacio."
   },
   "Sidebar": {
     "title": "Plantilla de CRM para WhatsApp",
@@ -2051,5 +2052,11 @@
   },
   "DashboardShell": {
     "loading": "Cargando..."
+  },
+  "Workspace": {
+    "notFoundTitle": "Espacio de trabajo no encontrado",
+    "notFoundBody": "No hay ningún espacio de trabajo en esta dirección. Revisa el enlace que recibiste.",
+    "suspendedTitle": "Espacio de trabajo suspendido",
+    "suspendedBody": "Este espacio de trabajo está suspendido. Ponte en contacto con tu proveedor de servicio."
   }
 }

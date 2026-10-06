@@ -45,7 +45,9 @@ function LoginPageInner() {
       ? t("linkExpired")
       : linkError === "link_invalid"
         ? t("linkInvalid")
-        : null;
+        : linkError === "wrong_workspace"
+          ? t("wrongWorkspace")
+          : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

@@ -14,7 +14,8 @@
     "noAccount": "Don't have an account?",
     "createAccount": "Create account",
     "linkExpired": "That link has expired. For a password reset, use “Forgot password?” to request a new one; if you were confirming your email, sign up again.",
-    "linkInvalid": "That link couldn’t be used to sign you in. If you were confirming your email, it may already be verified — just sign in below. For a password reset, request a new link and open it in the same browser you requested it from."
+    "linkInvalid": "That link couldn’t be used to sign you in. If you were confirming your email, it may already be verified — just sign in below. For a password reset, request a new link and open it in the same browser you requested it from.",
+    "wrongWorkspace": "This account doesn't belong to this workspace. Sign in at your own workspace's address."
   },
   "Sidebar": {
     "title": "CRM Template for WhatsApp",
@@ -2063,5 +2064,11 @@
   },
   "DashboardShell": {
     "loading": "Loading..."
+  },
+  "Workspace": {
+    "notFoundTitle": "Workspace not found",
+    "notFoundBody": "There is no workspace at this address. Check the link you were given.",
+    "suspendedTitle": "Workspace suspended",
+    "suspendedBody": "This workspace is currently suspended. Please contact your service provider."
   }
 }

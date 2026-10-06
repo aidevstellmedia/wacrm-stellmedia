@@ -148,6 +148,8 @@ const nextConfig: NextConfig = {
             value:
               "public, max-age=0, s-maxage=300, stale-while-revalidate=86400",
           },
+          // White-label: same path renders different branding per host.
+          { key: "Vary", value: "Host, X-Forwarded-Host" },
         ],
       },
       {
