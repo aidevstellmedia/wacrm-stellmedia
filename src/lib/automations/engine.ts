@@ -18,6 +18,7 @@ import type {
   CreateDealStepConfig,
   AssignConversationStepConfig,
 } from '@/types'
+import { isTenantActive } from '@/lib/platform/tenant-status'
 import { supabaseAdmin } from './admin-client'
 import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
@@ -66,6 +67,10 @@ export interface DispatchInput {
  */
 export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
   try {
+    // White-label soft suspend: no automation runs (and no log rows) for
+    // a suspended workspace.
+    if (!(await isTenantActive(input.accountId))) return
+
     const db = supabaseAdmin()
 
     // Tenant isolation. `contactId` can be caller-supplied (the manual

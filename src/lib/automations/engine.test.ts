@@ -153,6 +153,9 @@ vi.mock("./admin-client", () => {
   };
 });
 
+const tenant = vi.hoisted(() => ({ active: true }));
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenant.active }));
+
 vi.mock("./meta-send", () => ({
   engineSendText: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
@@ -182,7 +185,27 @@ beforeEach(() => {
   h.state.logInserts = [];
   h.state.logUpdates = [];
   h.state.pending = [];
+  tenant.active = true;
   vi.clearAllMocks();
+});
+
+describe("runAutomationsForTrigger — soft suspend", () => {
+  it("returns early without touching the DB for a suspended workspace", async () => {
+    tenant.active = false;
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { message_text: "hi" },
+    });
+
+    expect(h.state.fromCalls).toHaveLength(0);
+    expect(h.state.logInserts).toHaveLength(0);
+  });
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {

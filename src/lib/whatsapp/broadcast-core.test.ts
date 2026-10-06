@@ -8,7 +8,8 @@ import {
 
 // Contact resolution and token decryption are exercised elsewhere — stub
 // them so these tests focus on the persistence boundary.
-vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
+const tenant = vi.hoisted(() => ({ active: true }))
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenant.active, assertTenantActive: async () => {} }))
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: () => 'plain-access-token',
 }));
@@ -134,6 +135,24 @@ describe('createBroadcast recipient validation (#586)', () => {
       })
     ).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     expect(calls.rpc).toHaveLength(0);
+  });
+});
+
+describe('createBroadcast soft suspend', () => {
+  it('throws workspace_suspended / 403 before creating anything', async () => {
+    tenant.active = false;
+    try {
+      const { db, calls } = makeDb({ data: [], error: null });
+      await expect(
+        createBroadcast(db, 'acc', 'user', {
+          templateName: 'promo',
+          recipients: [{ to: '+14155550123' }],
+        })
+      ).rejects.toMatchObject({ code: 'workspace_suspended', status: 403 });
+      expect(calls.rpc).toHaveLength(0);
+    } finally {
+      tenant.active = true;
+    }
   });
 });
 

@@ -20,7 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { BroadcastError, type BroadcastPlan } from '@/lib/whatsapp/broadcast-core';
 import { decrypt } from '@/lib/whatsapp/encryption';
-import { assertTenantActive } from '@/lib/platform/tenant-status';
+import { isTenantActive } from '@/lib/platform/tenant-status';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
@@ -145,6 +145,10 @@ export async function planBroadcastResume(
   broadcastId: string,
   scope: ResumeScope
 ): Promise<ResumePlan> {
+  if (!(await isTenantActive(accountId))) {
+    throw new BroadcastError('workspace_suspended', 'This workspace is suspended.', 403);
+  }
+
   const { data: broadcast, error: bcError } = await db
     .from('broadcasts')
     .select('id, template_name, template_language')
@@ -232,8 +236,6 @@ export async function planBroadcastResume(
       500
     );
   }
-
-  await assertTenantActive(accountId);
 
   const plan: BroadcastPlan = {
     broadcastId,

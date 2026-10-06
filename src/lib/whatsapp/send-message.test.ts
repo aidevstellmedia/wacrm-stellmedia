@@ -166,7 +166,8 @@ const sendTemplateMessage = vi.fn(async () => ({ messageId: 'wamid.1' }));
 
 // Stub only the senders — the module also exports INTERACTIVE_LIMITS,
 // which `interactive.ts` needs for the payload validation covered above.
-vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
+const tenant = vi.hoisted(() => ({ active: true }))
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenant.active, assertTenantActive: async () => {} }))
 vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.text' })),
@@ -360,6 +361,30 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
 // ============================================================
 
 const BSUID = 'US.13491208655302741918';
+
+describe('sendMessageToConversation — soft suspend', () => {
+  it('rejects with workspace_suspended / 403 and never calls Meta', async () => {
+    tenant.active = false;
+    sendTemplateMessage.mockClear();
+    try {
+      await expect(
+        sendMessageToConversation(sendPathDb([TEMPLATE_ROW], {}), 'acct-1', {
+          conversationId: 'cv-1',
+          messageType: 'template',
+          templateName: 'order_update',
+          templateParams: ['A', 'B'],
+        })
+      ).rejects.toMatchObject({
+        name: 'SendMessageError',
+        code: 'workspace_suspended',
+        status: 403,
+      });
+      expect(sendTemplateMessage).not.toHaveBeenCalled();
+    } finally {
+      tenant.active = true;
+    }
+  });
+});
 
 describe('sendMessageToConversation — BSUID recipients (#519)', () => {
   it('sends to the BSUID when the contact has no phone number', async () => {

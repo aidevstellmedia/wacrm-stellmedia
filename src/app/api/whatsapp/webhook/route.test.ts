@@ -45,7 +45,8 @@ const h = vi.hoisted(() => ({
   },
 }))
 
-vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
+const tenant = vi.hoisted(() => ({ active: true }))
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenant.active, assertTenantActive: async () => {} }))
 vi.mock('next/server', () => ({
   after: (cb: () => Promise<void> | void) => {
     h.state.afterCallbacks.push(cb)
@@ -364,6 +365,7 @@ async function runStatusWebhook(status: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  tenant.active = true
   h.state.messageUpsertResult = [{ id: 'msg-1' }]
   h.state.priorCustomerMsgCount = 0
   h.state.replyContextParent = null
@@ -426,6 +428,18 @@ describe('inbound webhook: idempotent insert (#367)', () => {
     expect(h.state.rpcCalls).toHaveLength(1)
     expect(h.dispatchInboundToFlows).toHaveBeenCalledTimes(1)
     expect(h.dispatchWebhookEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('a suspended workspace still stores the message but runs no bots, automations, AI or customer webhooks', async () => {
+    tenant.active = false
+    await runWebhook()
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.rpcCalls).toHaveLength(1)
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled()
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled()
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
+    expect(h.dispatchWebhookEvent).not.toHaveBeenCalled()
   })
 
   it('a replayed delivery is a no-op: no unread bump, no fan-out', async () => {

@@ -9,7 +9,8 @@ import {
   RESUME_MAX_PER_REQUEST,
 } from './broadcast-resume';
 
-vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => true, assertTenantActive: async () => {} }))
+const tenant = vi.hoisted(() => ({ active: true }))
+vi.mock("@/lib/platform/tenant-status", () => ({ isTenantActive: async () => tenant.active, assertTenantActive: async () => {} }))
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => `decrypted:${v}`,
 }));
@@ -319,6 +320,28 @@ describe('planBroadcastResume', () => {
     expect(plan.planned).toHaveLength(RESUME_MAX_PER_REQUEST);
     // Surfaced to the caller rather than silently dropped.
     expect(remaining).toBe(25);
+  });
+
+  it('refuses a suspended workspace before reading or writing any rows', async () => {
+    tenant.active = false;
+    try {
+      const writes: PlanWrites = {};
+      const db = planDb(
+        { broadcast: BROADCAST, config: CONFIG, recipients: [recipient('r1', null)] },
+        writes,
+      );
+      const fromSpy = vi.spyOn(db, 'from');
+      await expect(
+        planBroadcastResume(db, 'acct-1', 'bc-1', 'pending'),
+      ).rejects.toMatchObject({
+        code: 'workspace_suspended',
+        status: 403,
+      });
+      expect(fromSpy).not.toHaveBeenCalled();
+      expect(writes.failedUpdate).toBeUndefined();
+    } finally {
+      tenant.active = true;
+    }
   });
 
   it('404s a broadcast that is not on this account', async () => {

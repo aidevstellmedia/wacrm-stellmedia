@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { expireAwaitingReplies, resumePendingExecution } from '@/lib/automations/engine'
+import { isTenantActive } from '@/lib/platform/tenant-status'
 import type { AutomationContext } from '@/lib/automations/engine'
 
 /**
@@ -49,6 +50,10 @@ export async function GET(request: Request) {
 
   let processed = 0
   for (const row of due) {
+    // Suspended workspace: leave the row untouched (still 'pending') so
+    // it resumes after reactivation.
+    if (!(await isTenantActive(row.account_id as string))) continue
+
     const { data: claim } = await admin
       .from('automation_pending_executions')
       .update({ status: 'running' })
