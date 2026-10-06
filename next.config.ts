@@ -141,7 +141,7 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
       {
-        source: "/:path((?!_next/static|_next/image|api).*)",
+        source: "/:path((?!_next/static|_next/image|api|workspace-not-found|workspace-suspended).*)",
         headers: [
           {
             key: "Cache-Control",

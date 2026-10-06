@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requirePlatformAdmin } from "@/lib/platform/guard";
 import { getTenantDetail } from "@/lib/platform/tenants";
-import { readPlatformConfig } from "@/lib/platform/config";
+import { readPlatformConfig, tenantOrigin } from "@/lib/platform/config";
 import { brandingAssetUrl } from "@/lib/platform/branding";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -25,12 +25,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ a
   if (!detail) notFound();
 
   const { row, domains, ownerEmail } = detail;
-  const baseDomain = readPlatformConfig().baseDomain;
+  const cfg = readPlatformConfig();
+  const baseDomain = cfg.baseDomain;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const version = cacheBuster();
   const logoUrl = brandingAssetUrl(supabaseUrl, detail.logoPath, version);
   const faviconUrl = brandingAssetUrl(supabaseUrl, detail.faviconPath, version);
-  const primary = row.domains[0];
+  const address = row.slug ? tenantOrigin(cfg, row.slug) : null;
 
   return (
     <div className="space-y-8">
@@ -41,9 +42,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ a
             {row.status}
           </Badge>
         </div>
-        {primary && (
-          <a href={`https://${primary}`} target="_blank" rel="noreferrer" className="text-sm text-primary hover:underline">
-            https://{primary}
+        {address && (
+          <a href={address} target="_blank" rel="noreferrer" className="text-sm text-primary hover:underline">
+            {address}
           </a>
         )}
         <p className="text-sm text-muted-foreground">Owner: {ownerEmail ?? "—"}</p>
@@ -55,13 +56,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ a
           <div className="flex items-center gap-4">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="Logo" className="h-12 max-w-40 object-contain" />
+              <span className="inline-flex rounded-md bg-white px-1.5 py-1">
+                <img src={logoUrl} alt="Logo" className="h-12 max-w-40 object-contain" />
+              </span>
             ) : (
               <span className="text-xs text-muted-foreground">No logo</span>
             )}
             {faviconUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={faviconUrl} alt="Favicon" className="size-8 object-contain" />
+              <span className="inline-flex rounded-md bg-white px-1.5 py-1">
+                <img src={faviconUrl} alt="Favicon" className="size-8 object-contain" />
+              </span>
             ) : (
               <span className="text-xs text-muted-foreground">No favicon</span>
             )}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { requirePlatformAdmin } from "@/lib/platform/guard";
+import { AdminSignOut } from "./sign-out";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Admin", robots: { index: false, follow: false } };
@@ -18,6 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <Link href="/admin/audit" className="hover:text-foreground">Audit log</Link>
           </nav>
           <span className="ml-auto text-xs text-muted-foreground">{admin.email}</span>
+          <AdminSignOut />
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

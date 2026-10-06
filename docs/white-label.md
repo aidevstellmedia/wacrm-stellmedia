@@ -4,6 +4,8 @@
 
 Platform mode turns one deployment into a multi-client (white-label) CRM. It is enabled if and only if `PLATFORM_BASE_DOMAIN` or `ADMIN_HOSTNAME` is set; with neither set the app behaves exactly as upstream. In platform mode every request host must be a registered client domain (a `*.crm.stellmedia.com` subdomain or a custom domain), each host is bound to one account, public sign-up is disabled (clients are invited by a platform admin), and the super-admin panel (`/admin`) is served on `ADMIN_HOSTNAME` only.
 
+With platform mode off the app still shows the Stell Media name and palette by design; only the multi-tenant routing and admin panel are disabled.
+
 ## Local development
 
 This is the complete walkthrough for running platform mode on your machine. `*.localhost` resolves to 127.0.0.1 in Chrome and Firefox, so no DNS or hosts-file edits are needed.
@@ -15,7 +17,7 @@ npx supabase start
 npx supabase status        # prints API URL, keys, DB URL
 ```
 
-With the defaults: API `http://127.0.0.1:54321`, DB `postgresql://postgres:postgres@127.0.0.1:54322/postgres`, Studio `http://127.0.0.1:54323`, Inbucket (mail) `http://127.0.0.1:54324`. `supabase start` applies everything in `supabase/migrations/`, including `100_platform_tenancy.sql`. To re-apply from scratch: `npx supabase db reset`.
+With the defaults: API `http://127.0.0.1:54321`, DB `postgresql://postgres:postgres@127.0.0.1:54322/postgres`, Studio `http://127.0.0.1:54323`, Mailpit (local mail UI) `http://127.0.0.1:54324`. `supabase start` applies everything in `supabase/migrations/`, including `100_platform_tenancy.sql`. To re-apply from scratch: `npx supabase db reset`.
 
 ### 2. Create `.env.local`
 
@@ -56,7 +58,7 @@ Then `npx supabase stop && npx supabase start` to apply.
 
 ### 4. Make yourself a platform admin
 
-The migration's backfill only promotes `ai.dev@stellmedia.com`, and only if that user already exists when the migration runs. On a fresh local database, sign up / create your user first (Studio at `http://127.0.0.1:54323` > Authentication > Add user), then run in the SQL editor or with `psql postgresql://postgres:postgres@127.0.0.1:54322/postgres`:
+The migration's backfill only promotes `ai.dev@stellmedia.com`, and only if that user already exists when the migration runs. On a fresh local database, sign up / create your user first (Studio at `http://127.0.0.1:54323` > Authentication > Add user), then run in the SQL editor or with `psql postgresql://postgres:postgres@127.0.0.1:54322/postgres`. If `psql` is not installed, pipe the SQL through the DB container instead: `docker exec -i supabase_db_<project> psql -U postgres` (find the name with `docker ps`; `<project>` is the `project_id` in `supabase/config.toml`):
 
 ```sql
 insert into platform_admins (user_id)
@@ -74,11 +76,11 @@ On a fresh local database the migration backfill did not run for your user, so n
 2. Slug `stellmedia`, company name `Stell Media`, upload the logo (e.g. `~/Downloads/stellmedia-logo.webp`; WebP is accepted, max 512 KB), and set the owner name and email.
 3. The owner email must be a different address from your platform-admin user: one user belongs to one client, so the platform admin cannot also be that client's member. Any test address works locally.
 4. Provisioning registers the host `<slug>.<PLATFORM_BASE_DOMAIN>` (`tenantSubdomainHost` in `src/lib/platform/config.ts`), so with `PLATFORM_BASE_DOMAIN=localhost` the client is served at `stellmedia.localhost`.
-5. Read the invite in Inbucket (next section), click the link and set the password on `http://stellmedia.localhost:3000`.
+5. Read the invite in Mailpit (next section), click the link and set the password on `http://stellmedia.localhost:3000`.
 
-### 6. Invite emails (Inbucket)
+### 6. Invite emails (Mailpit)
 
-Local Supabase sends no real email. Open Inbucket at <http://127.0.0.1:54324>, find the invite or password-reset message and click its link.
+Local Supabase sends no real email. Open Mailpit at <http://127.0.0.1:54324> (the Supabase CLI replaced Inbucket with Mailpit, so its API paths differ from Inbucket's), find the invite or password-reset message and click its link.
 
 For the link to land on the client's host with a working session, the invite and recovery templates must use the `token_hash` form. Locally, set them in `supabase/config.toml` with a `content_path` HTML file (the hosted project uses the same link markup, set in the dashboard; see "Supabase Auth" below):
 
@@ -122,6 +124,8 @@ Create these A records pointing at the VPS IP:
 - Turn "Force SSL" on.
 - Custom client domains: one proxy host each, with a normal HTTP-challenge certificate.
 - NPM forwards `Host` by default; do not override it. Tenant resolution depends on it.
+- In each proxy host's **Advanced** tab add `proxy_set_header X-Forwarded-Host $host;` so the proxy always overwrites that header. The app prefers `X-Forwarded-Host` for tenant resolution, and without this line a client could send its own value and spoof the host.
+- Do not expose the app container's port publicly; only NPM should be able to reach it, otherwise the proxy (and the header above) can be bypassed.
 
 ## Supabase Auth
 
@@ -181,6 +185,7 @@ PLATFORM_NAME=Stell Media CRM
 Suspending a client is a soft suspend.
 
 - Stops: dashboard UI (shows a suspended page), dashboard `/api/*` (403 `workspace_suspended`), API keys (403), and outbound sends, broadcasts, automations, flows and AI.
+- Timing: a suspend or reactivate takes effect within ~60 s (per server process); outbound sends stop within ~30 s. Branding and domain edits can also take up to ~60 s to appear.
 - Keeps working: inbound WhatsApp webhook messages are still received and stored; data is retained. Reactivating restores everything.
 
 ## Known limitations

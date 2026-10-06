@@ -43,15 +43,15 @@ function FileFields() {
 export function CompleteSetupForm({ accountId, companyName }: { accountId: string; companyName: string }) {
   const [state, formAction, isPending] = useActionState(completeSetupAction, initial);
   return (
-    <form action={formAction} className="max-w-xl space-y-4">
+    <form key={JSON.stringify(state.values ?? null)} action={formAction} className="max-w-xl space-y-4">
       <input type="hidden" name="accountId" value={accountId} />
       <div className="space-y-1.5">
         <Label htmlFor="companyName">Company name</Label>
-        <Input id="companyName" name="companyName" defaultValue={companyName} required />
+        <Input id="companyName" name="companyName" defaultValue={state.values?.companyName ?? companyName} required />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="slug">Slug</Label>
-        <Input id="slug" name="slug" required />
+        <Input id="slug" name="slug" defaultValue={state.values?.slug} required />
       </div>
       <FileFields />
       <Feedback state={state} />
@@ -79,10 +79,10 @@ export function BrandingForm({ accountId, companyName }: { accountId: string; co
 export function AddDomainForm({ accountId }: { accountId: string }) {
   const [state, formAction, isPending] = useActionState(addDomainAction, initial);
   return (
-    <form action={formAction} className="max-w-xl space-y-2">
+    <form key={JSON.stringify(state.values ?? null)} action={formAction} className="max-w-xl space-y-2">
       <input type="hidden" name="accountId" value={accountId} />
       <div className="flex gap-2">
-        <Input name="hostname" placeholder="crm.acme.com" required aria-label="Custom domain" />
+        <Input name="hostname" defaultValue={state.values?.hostname} placeholder="crm.acme.com" required aria-label="Custom domain" />
         <Button type="submit" disabled={isPending}>Add domain</Button>
       </div>
       <Feedback state={state} />

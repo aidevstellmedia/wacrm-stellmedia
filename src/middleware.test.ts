@@ -218,6 +218,32 @@ describe("middleware — white-label platform mode", () => {
     expect(res.headers.get("x-middleware-rewrite")).toContain("/workspace-suspended");
   });
 
+  it("sets no-store on the workspace error-page rewrites", async () => {
+    platformOn();
+    const nf = await middleware(platformRequest("https://nope.crm.stellmedia.com/login"));
+    expect(nf.headers.get("x-middleware-rewrite")).toContain("/workspace-not-found");
+    expect(nf.headers.get("cache-control")).toBe("no-store");
+    mockTenants["acme.crm.stellmedia.com"] = { ...ACME, status: "suspended" };
+    const sus = await middleware(platformRequest("https://acme.crm.stellmedia.com/login"));
+    expect(sus.headers.get("x-middleware-rewrite")).toContain("/workspace-suspended");
+    expect(sus.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("404s dashboard APIs on the admin host (no suspension bypass)", async () => {
+    platformOn();
+    mockUser = { id: "u1" };
+    const res = await middleware(platformRequest("https://admin.crm.stellmedia.com/api/whatsapp/broadcast", { method: "POST" }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found" });
+  });
+
+  it("still lets the Meta webhook through on the admin host", async () => {
+    platformOn();
+    mockUser = { id: "u1" };
+    const res = await middleware(platformRequest("https://admin.crm.stellmedia.com/api/whatsapp/webhook", { method: "POST" }));
+    expect(res.status).toBe(200);
+  });
+
   it("lets the Meta webhook through on any host", async () => {
     platformOn();
     const res = await middleware(platformRequest("https://old-host.example.com/api/whatsapp/webhook", { method: "POST" }));

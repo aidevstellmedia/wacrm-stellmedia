@@ -17,14 +17,18 @@ export function NewClientForm({ baseDomain }: { baseDomain: string | null }) {
   const [state, formAction, isPending] = useActionState(createClientAction, initial);
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
+  // Slug is controlled; the typed value already lives in `slug` across a failed submit.
 
   return (
-    <form action={formAction} className="space-y-4">
+    // Keyed on the echoed values so the uncontrolled inputs re-render with
+    // what was submitted after a failed attempt (files can't be preserved).
+    <form key={JSON.stringify(state.values ?? null)} action={formAction} className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="companyName">Company name</Label>
         <Input
           id="companyName"
           name="companyName"
+          defaultValue={state.values?.companyName}
           required
           onChange={(e) => {
             if (!slugEdited) setSlug(suggestSlug(e.target.value));
@@ -49,11 +53,11 @@ export function NewClientForm({ baseDomain }: { baseDomain: string | null }) {
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="ownerName">Owner name</Label>
-        <Input id="ownerName" name="ownerName" />
+        <Input id="ownerName" name="ownerName" defaultValue={state.values?.ownerName} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="ownerEmail">Owner email</Label>
-        <Input id="ownerEmail" name="ownerEmail" type="email" required />
+        <Input id="ownerEmail" name="ownerEmail" type="email" defaultValue={state.values?.ownerEmail} required />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="logo">Logo (PNG, WebP or JPEG, max 512 KB)</Label>

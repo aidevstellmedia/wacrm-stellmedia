@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import { isTenantActive } from '@/lib/platform/tenant-status';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
@@ -25,6 +26,12 @@ export async function POST(request: Request) {
     // missing role check let a read-only viewer put a visible reaction on
     // the customer's message even though RLS blocked the local mirror.
     const { supabase, accountId, userId } = await requireRole('agent');
+
+    // Soft suspension: refuse before any Meta call (defence in depth — the
+    // middleware gate only covers tenant hosts).
+    if (!(await isTenantActive(accountId))) {
+      return NextResponse.json({ error: 'workspace_suspended' }, { status: 403 });
+    }
 
     const limit = checkRateLimit(`react:${userId}`, RATE_LIMITS.react);
     if (!limit.success) {

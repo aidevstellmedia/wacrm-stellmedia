@@ -33,7 +33,7 @@ vi.mock("./admin-client", () => ({
   platformAdmin: () => ({ from: builder, auth: { admin: { inviteUserByEmail: invite } } }),
 }));
 
-import { addTenantDomain, completeTenantSetup, createTenant, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
+import { addTenantDomain, completeTenantSetup, createTenant, listTenants, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
 
 beforeEach(() => {
   calls.length = 0;
@@ -109,10 +109,16 @@ describe("completeTenantSetup", () => {
     expect(calls.some((c) => c.table === "tenant_settings" && c.op === "upsert")).toBe(false);
   });
 
+  it("refuses an account that already has a settings row", async () => {
+    handler = (c) =>
+      c.table === "tenant_settings" && c.op === "select" && c.filters.account_id === "a1" ? { data: { account_id: "a1" } } : undefined;
+    await expect(completeTenantSetup("a1", setup)).rejects.toThrow("This client is already set up.");
+    expect(calls.some((c) => c.op === "upsert" || c.op === "update")).toBe(false);
+  });
+
   it("converges when re-run for the same account", async () => {
     handler = (c) => {
       if (c.table === "tenant_domains" && c.op === "select") return { data: { account_id: "a1" } };
-      if (c.table === "tenant_settings" && c.op === "select") return { data: { account_id: "a1" } };
     };
     await completeTenantSetup("a1", setup);
     const order = calls.filter((c) => c.op === "upsert").map((c) => c.table);
@@ -145,5 +151,24 @@ describe("addTenantDomain", () => {
     } finally {
       delete process.env.ADMIN_HOSTNAME;
     }
+  });
+});
+
+describe("listTenants", () => {
+  it("hides a platform admin's personal account but keeps set-up and other accounts", async () => {
+    handler = (c) => {
+      if (c.table === "accounts") {
+        return { data: [
+          { id: "adm", name: "Admin personal", owner_user_id: "u-admin", created_at: "2026-01-03" },
+          { id: "cli", name: "Client", owner_user_id: "u-cli", created_at: "2026-01-02" },
+          { id: "adm-tenant", name: "Admin as client", owner_user_id: "u-admin", created_at: "2026-01-01" },
+        ] };
+      }
+      if (c.table === "tenant_settings") return { data: [{ account_id: "adm-tenant", slug: "x", status: "active" }] };
+      if (c.table === "platform_admins") return { data: [{ user_id: "u-admin" }] };
+      return { data: [] };
+    };
+    const rows = await listTenants();
+    expect(rows.map((r) => r.accountId)).toEqual(["cli", "adm-tenant"]);
   });
 });

@@ -7,7 +7,8 @@ import { readPlatformConfig } from "./config";
 import * as tenants from "./tenants";
 import { validateBrandingFile, validateCustomDomain, validateEmail, validateSlug } from "./validation";
 
-export type ActionState = { error: string | null; ok?: boolean };
+/** `values` echoes submitted text fields on failure so forms can keep them (files can't be kept). */
+export type ActionState = { error: string | null; ok?: boolean; values?: Record<string, string> };
 
 type BrandingFile = { file: File; ext: string } | null;
 
@@ -45,14 +46,15 @@ function revalidateClient(accountId: string) {
 
 export async function createClientAction(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requirePlatformAdmin();
+  const values = { companyName: str(fd, "companyName"), slug: str(fd, "slug"), ownerName: str(fd, "ownerName"), ownerEmail: str(fd, "ownerEmail") };
   const companyName = str(fd, "companyName").trim();
-  if (!companyName) return { error: "Company name is required." };
+  if (!companyName) return { error: "Company name is required.", values };
   const slug = validateSlug(str(fd, "slug"));
-  if (!slug.ok) return { error: slug.error };
+  if (!slug.ok) return { error: slug.error, values };
   const email = validateEmail(str(fd, "ownerEmail"));
-  if (!email.ok) return { error: email.error };
+  if (!email.ok) return { error: email.error, values };
   const files = brandingInputs(fd);
-  if ("error" in files) return { error: files.error };
+  if ("error" in files) return { error: files.error, values };
 
   let accountId = "";
   const res = await run(async () => {
@@ -61,28 +63,29 @@ export async function createClientAction(_: ActionState, fd: FormData): Promise<
     }));
     await tenants.writeAudit(admin.userId, "tenant.create", accountId, { slug: slug.slug, ownerEmail: email.email });
   });
-  if (res.error) return res;
+  if (res.error) return { ...res, values };
   revalidatePath("/admin");
   redirect(`/admin/clients/${accountId}`);
 }
 
 export async function completeSetupAction(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requirePlatformAdmin();
+  const values = { companyName: str(fd, "companyName"), slug: str(fd, "slug") };
   const accountId = str(fd, "accountId");
-  if (!accountId) return { error: "Missing client." };
+  if (!accountId) return { error: "Missing client.", values };
   const companyName = str(fd, "companyName").trim();
-  if (!companyName) return { error: "Company name is required." };
+  if (!companyName) return { error: "Company name is required.", values };
   const slug = validateSlug(str(fd, "slug"));
-  if (!slug.ok) return { error: slug.error };
+  if (!slug.ok) return { error: slug.error, values };
   const files = brandingInputs(fd);
-  if ("error" in files) return { error: files.error };
+  if ("error" in files) return { error: files.error, values };
 
   const res = await run(async () => {
     await tenants.completeTenantSetup(accountId, { companyName, slug: slug.slug, ...files });
     await tenants.writeAudit(admin.userId, "tenant.complete_setup", accountId, { slug: slug.slug });
   });
   if (res.ok) revalidateClient(accountId);
-  return res;
+  return res.error ? { ...res, values } : res;
 }
 
 export async function updateBrandingAction(_: ActionState, fd: FormData): Promise<ActionState> {
@@ -121,17 +124,18 @@ export async function setStatusAction(_: ActionState, fd: FormData): Promise<Act
 
 export async function addDomainAction(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requirePlatformAdmin();
+  const values = { hostname: str(fd, "hostname") };
   const accountId = str(fd, "accountId");
   if (!accountId) return { error: "Missing client." };
   const domain = validateCustomDomain(str(fd, "hostname"), readPlatformConfig().baseDomain);
-  if (!domain.ok) return { error: domain.error };
+  if (!domain.ok) return { error: domain.error, values };
 
   const res = await run(async () => {
     await tenants.addTenantDomain(accountId, domain.hostname);
     await tenants.writeAudit(admin.userId, "tenant.domain_add", accountId, { hostname: domain.hostname });
   });
   if (res.ok) revalidateClient(accountId);
-  return res;
+  return res.error ? { ...res, values } : res;
 }
 
 export async function removeDomainAction(_: ActionState, fd: FormData): Promise<ActionState> {

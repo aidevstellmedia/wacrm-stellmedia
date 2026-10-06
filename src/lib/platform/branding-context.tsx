@@ -27,8 +27,14 @@ export function BrandMark({ size = "sm" }: { size?: "sm" | "lg" }) {
     // Logos are often wide wordmarks (e.g. Stell Media's is ~3.6:1), so fix
     // the height and let the width follow, capped.
     const h = size === "lg" ? "h-12 max-w-[240px]" : "h-8 max-w-[180px]";
-    // eslint-disable-next-line @next/next/no-img-element -- arbitrary storage host, tiny image
-    return <img src={logoUrl} alt={displayName} className={`${h} w-auto object-contain`} />;
+    // Always-on light tile: logos are usually dark-on-transparent and vanish on
+    // dark themes (Tailwind `dark:` never fires here — mode is html[data-mode]).
+    return (
+      <span className="inline-flex rounded-md bg-white px-1.5 py-1">
+        {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary storage host, tiny image */}
+        <img src={logoUrl} alt={displayName} className={`${h} w-auto object-contain`} />
+      </span>
+    );
   }
   return (
     <div className={`flex ${box} items-center justify-center rounded-lg bg-primary text-primary-foreground`}>

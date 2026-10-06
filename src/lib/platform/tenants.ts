@@ -36,17 +36,24 @@ export async function writeAudit(
 
 export async function listTenants(): Promise<TenantListRow[]> {
   // Fine at tens of tenants; paginate if this grows past a few hundred.
-  const [accounts, settings, domains, profiles, configs] = await Promise.all([
-    db().from("accounts").select("id, name, created_at").order("created_at", { ascending: false }),
+  const [accounts, settings, domains, profiles, configs, admins] = await Promise.all([
+    db().from("accounts").select("id, name, owner_user_id, created_at").order("created_at", { ascending: false }),
     db().from("tenant_settings").select("account_id, slug, status"),
     db().from("tenant_domains").select("account_id, hostname"),
     db().from("profiles").select("account_id"),
     db().from("whatsapp_config").select("account_id"),
+    db().from("platform_admins").select("user_id"),
   ]);
-  for (const r of [accounts, settings, domains, profiles, configs]) if (r.error) throw new Error(r.error.message);
+  for (const r of [accounts, settings, domains, profiles, configs, admins]) if (r.error) throw new Error(r.error.message);
 
   const settingsBy = new Map((settings.data ?? []).map((s) => [s.account_id as string, s]));
-  return (accounts.data ?? []).map((a) => {
+  // A platform admin's own personal account is not a client: hide it unless
+  // it has actually been set up as a tenant.
+  const adminIds = new Set((admins.data ?? []).map((a) => a.user_id as string));
+  const visible = (accounts.data ?? []).filter(
+    (a) => settingsBy.has(a.id) || !adminIds.has(a.owner_user_id as string),
+  );
+  return visible.map((a) => {
     const s = settingsBy.get(a.id);
     return {
       accountId: a.id,
@@ -92,6 +99,11 @@ export async function completeTenantSetup(
 ): Promise<void> {
   const cfg = readPlatformConfig();
   const taken = () => new PlatformError(`The address "${input.slug}" is already taken.`);
+  // Only incomplete accounts (no settings row yet) may run setup.
+  const { data: already, error: alreadyErr } = await db()
+    .from("tenant_settings").select("account_id").eq("account_id", accountId).maybeSingle();
+  if (alreadyErr) throw new Error(alreadyErr.message);
+  if (already) throw new PlatformError("This client is already set up.");
   const { error: nameErr } = await db().from("accounts").update({ name: input.companyName }).eq("id", accountId);
   if (nameErr) throw new Error(nameErr.message);
 

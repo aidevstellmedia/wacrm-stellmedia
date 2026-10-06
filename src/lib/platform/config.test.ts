@@ -18,6 +18,19 @@ describe("readPlatformConfig", () => {
   });
 });
 
+describe("invalid platform hostnames", () => {
+  it("throws for a malformed PLATFORM_BASE_DOMAIN", () => {
+    expect(() => readPlatformConfig({ PLATFORM_BASE_DOMAIN: "https://crm.example.com/" })).toThrow(/Invalid PLATFORM_BASE_DOMAIN/);
+    expect(() => readPlatformConfig({ PLATFORM_BASE_DOMAIN: "not a host" })).toThrow(/bare hostname/);
+  });
+  it("throws for a malformed ADMIN_HOSTNAME", () => {
+    expect(() => readPlatformConfig({ ADMIN_HOSTNAME: "admin_!.example.com" })).toThrow(/Invalid ADMIN_HOSTNAME/);
+  });
+  it("treats empty/blank values as unset", () => {
+    expect(readPlatformConfig({ PLATFORM_BASE_DOMAIN: "  ", ADMIN_HOSTNAME: "" }).enabled).toBe(false);
+  });
+});
+
 describe("tenant URLs", () => {
   const cfg = readPlatformConfig({ PLATFORM_BASE_DOMAIN: "crm.stellmedia.com" });
   it("builds the subdomain host", () => {

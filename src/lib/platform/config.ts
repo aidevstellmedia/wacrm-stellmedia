@@ -15,11 +15,21 @@ export interface PlatformConfig {
   platformName: string;
 }
 
+// Fail closed and loud: a set-but-malformed value must not silently turn
+// platform mode off (which would serve every tenant host as single-tenant).
+function requireHostname(name: string, raw: string | undefined): string | null {
+  const value = normalizeHostname(raw);
+  if (!value && raw?.trim()) {
+    throw new Error(`Invalid ${name}: "${raw}" (use a bare hostname like crm.example.com)`);
+  }
+  return value;
+}
+
 export function readPlatformConfig(
   env: Record<string, string | undefined> = process.env,
 ): PlatformConfig {
-  const baseDomain = normalizeHostname(env.PLATFORM_BASE_DOMAIN);
-  const adminHostname = normalizeHostname(env.ADMIN_HOSTNAME);
+  const baseDomain = requireHostname("PLATFORM_BASE_DOMAIN", env.PLATFORM_BASE_DOMAIN);
+  const adminHostname = requireHostname("ADMIN_HOSTNAME", env.ADMIN_HOSTNAME);
   return {
     enabled: Boolean(baseDomain || adminHostname),
     baseDomain,

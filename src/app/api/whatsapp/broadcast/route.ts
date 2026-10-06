@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { isTenantActive } from '@/lib/platform/tenant-status'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
@@ -73,6 +74,12 @@ export async function POST(request: Request) {
     // Nothing about that is recoverable after the fact, so the check has
     // to happen here.
     const { supabase, accountId, userId } = await requireRole('agent')
+
+    // Soft suspension: refuse before any Meta call (defence in depth — the
+    // middleware gate only covers tenant hosts).
+    if (!(await isTenantActive(accountId))) {
+      return NextResponse.json({ error: 'workspace_suspended' }, { status: 403 })
+    }
 
     // Per-user broadcast budget. Note: this limits how often a user
     // can *start* a campaign, not how many messages go out inside

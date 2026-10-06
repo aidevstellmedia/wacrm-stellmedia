@@ -115,6 +115,9 @@ export async function POST(
 
   if (error) return rpcErrorToResponse(error);
 
+  // Clears only the Node-side profile→account cache. The middleware (edge
+  // runtime, still under the deprecated middleware.ts name) keeps its own
+  // cache and re-reads on an account mismatch, so it self-heals regardless.
   forgetProfileAccount(user.id);
 
   return NextResponse.json({ ok: true, accountId });

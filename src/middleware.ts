@@ -91,7 +91,10 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = path
     url.search = ''
-    return withRefreshedCookies(NextResponse.rewrite(url, { request: { headers: forwardHeaders() } }))
+    const res = NextResponse.rewrite(url, { request: { headers: forwardHeaders() } })
+    // Per-host verdict pages must never be cached/shared by an edge.
+    res.headers.set('Cache-Control', 'no-store')
+    return withRefreshedCookies(res)
   }
   // A DB error while resolving the tenant or the user's account is an
   // outage, not a verdict: never 404 or sign the user out because of it.
@@ -108,6 +111,11 @@ export async function middleware(request: NextRequest) {
   const kind = classifyRequest({ cfg, host, pathname })
 
   if (kind === 'admin') {
+    // The admin host has no tenant, so the suspension gate never runs here.
+    // The admin UI uses only server actions; every /api/* call on this host
+    // would bypass soft suspension, so refuse them all. (Webhook, /api/v1 and
+    // /auth/callback are classified as exempt earlier and never reach here.)
+    if (isApi) return withRefreshedCookies(NextResponse.json({ error: 'not_found' }, { status: 404 }))
     if (pathname === '/signup') return redirectTo('/login')
     if (!user && pathname.startsWith('/admin')) return redirectTo('/login')
     if (user && (pathname === '/login' || protectedPaths.some(p => pathname.startsWith(p)))) {
