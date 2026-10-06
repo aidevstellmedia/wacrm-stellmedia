@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetTenantLookupCachesForTests, forgetProfileAccount, lookupProfileAccountId, lookupTenant } from "./tenant-lookup";
+import { PlatformLookupError, __resetTenantLookupCachesForTests, forgetProfileAccount, lookupProfileAccountId, lookupTenant } from "./tenant-lookup";
 
 const row = {
   account_id: "acc-1", slug: "acme", display_name: "Acme", logo_path: "acc-1/logo.png",
@@ -28,8 +28,8 @@ describe("lookupTenant", () => {
   });
   it("does not cache errors", async () => {
     const rpc = vi.fn(async () => ({ data: null, error: { message: "boom" } }));
-    expect(await lookupTenant({ rpc }, "x.example.com")).toBeNull();
-    await lookupTenant({ rpc }, "x.example.com");
+    await expect(lookupTenant({ rpc }, "x.example.com")).rejects.toThrow(PlatformLookupError);
+    await expect(lookupTenant({ rpc }, "x.example.com")).rejects.toThrow(PlatformLookupError);
     expect(rpc).toHaveBeenCalledTimes(2);
   });
 });
@@ -40,6 +40,13 @@ describe("lookupProfileAccountId", () => {
     const db = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }) };
     expect(await lookupProfileAccountId(db, "u1")).toBe("acc-9");
   });
+  it("caches null account_id", async () => {
+    const maybeSingle = vi.fn(async () => ({ data: { account_id: null }, error: null }));
+    const db = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }) };
+    expect(await lookupProfileAccountId(db, "u3")).toBeNull();
+    expect(await lookupProfileAccountId(db, "u3")).toBeNull();
+    expect(maybeSingle).toHaveBeenCalledTimes(1);
+  });
   it("forgets profile account and hits the DB again after", async () => {
     const maybeSingle = vi.fn(async () => ({ data: { account_id: "acc-9" }, error: null }));
     const db = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }) };
@@ -47,6 +54,13 @@ describe("lookupProfileAccountId", () => {
     expect(maybeSingle).toHaveBeenCalledTimes(1);
     forgetProfileAccount("u2");
     expect(await lookupProfileAccountId(db, "u2")).toBe("acc-9");
+    expect(maybeSingle).toHaveBeenCalledTimes(2);
+  });
+  it("does not cache profile lookup errors", async () => {
+    const maybeSingle = vi.fn(async () => ({ data: null, error: { message: "db error" } }));
+    const db = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }) };
+    await expect(lookupProfileAccountId(db, "u4")).rejects.toThrow(PlatformLookupError);
+    await expect(lookupProfileAccountId(db, "u4")).rejects.toThrow(PlatformLookupError);
     expect(maybeSingle).toHaveBeenCalledTimes(2);
   });
 });

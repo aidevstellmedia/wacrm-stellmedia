@@ -9,6 +9,13 @@ const TTL_MS = 60_000;
 const tenantCache = new TtlCache<TenantRecord | null>(TTL_MS);
 const profileCache = new TtlCache<string | null>(TTL_MS);
 
+export class PlatformLookupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PlatformLookupError";
+  }
+}
+
 export interface RpcClient {
   rpc(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
@@ -40,7 +47,7 @@ export async function lookupTenant(db: RpcClient, hostname: string): Promise<Ten
   const { data, error } = await db.rpc("resolve_tenant", { p_hostname: hostname });
   if (error) {
     console.error("[platform] resolve_tenant failed:", error.message);
-    return null; // not cached — retry next request
+    throw new PlatformLookupError(error.message); // not cached — retry next request
   }
   const row = (Array.isArray(data) ? data[0] : data) as ResolveTenantRow | undefined;
   const tenant: TenantRecord | null = row
@@ -62,7 +69,10 @@ export async function lookupProfileAccountId(db: ProfileClient, userId: string):
   const cached = profileCache.get(userId);
   if (cached !== undefined) return cached;
   const { data, error } = await db.from("profiles").select("account_id").eq("user_id", userId).maybeSingle();
-  if (error) return null;
+  if (error) {
+    console.error("[platform] profile lookup failed:", error);
+    throw new PlatformLookupError("profile lookup failed");
+  }
   const accountId = data?.account_id ?? null;
   profileCache.set(userId, accountId);
   return accountId;
