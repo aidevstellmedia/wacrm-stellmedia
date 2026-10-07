@@ -51,6 +51,10 @@ function walk(steps: StepLike[], prefix: string, issues: ValidationIssue[]): voi
   })
 }
 
+const CONDITION_OPERATORS = new Set(['equals', 'contains', 'starts_with', 'is_present', 'is_absent'])
+/** Operators that compare against `value` (vs. is_present / is_absent). */
+const VALUE_OPERATORS = new Set(['equals', 'contains', 'starts_with'])
+
 function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): void {
   const c = step.step_config ?? {}
   switch (step.step_type) {
@@ -122,8 +126,18 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
       if (!nonEmpty(c.subject)) {
         issues.push({ path: `${path}.subject`, message: 'condition subject is required' })
       }
-      if (!nonEmpty(c.operand)) {
+      // message_content tests the inbound text itself — nothing to point at.
+      if (c.subject !== 'message_content' && !nonEmpty(c.operand)) {
         issues.push({ path: `${path}.operand`, message: 'condition operand is required' })
+      }
+      if (c.operator !== undefined && !CONDITION_OPERATORS.has(String(c.operator))) {
+        issues.push({ path: `${path}.operator`, message: 'unknown condition operator' })
+      } else if (
+        (VALUE_OPERATORS.has(String(c.operator)) ||
+          (c.subject === 'message_content' && c.operator === undefined)) &&
+        !nonEmpty(c.value)
+      ) {
+        issues.push({ path: `${path}.value`, message: 'condition value is required' })
       }
       break
     case 'send_webhook':

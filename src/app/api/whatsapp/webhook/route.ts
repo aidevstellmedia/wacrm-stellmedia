@@ -905,7 +905,7 @@ async function processMessage(
   // webhook's 200 OK response to Meta.
   const inboundText = contentText ?? message.text?.body ?? ''
 
-  // An automation parked at a "wait for reply" Send Buttons / Send List
+  // An automation parked at a "wait for reply" Send Message / Buttons / List
   // step takes this message as its reply — a tap or typed text — and
   // continues from the step after the send. Like a Flow consuming the
   // message, that suppresses the content-level triggers and AI reply

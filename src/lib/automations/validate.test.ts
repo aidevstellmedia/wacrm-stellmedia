@@ -207,6 +207,33 @@ describe("validateStepsForActivation", () => {
   });
 });
 
+describe("condition operators", () => {
+  const cond = (step_config: Record<string, unknown>) =>
+    validateStepsForActivation([{ step_type: "condition", step_config }]).map((i) => i.path);
+
+  it("does not require an operand for message_content", () => {
+    expect(cond({ subject: "message_content", operator: "contains", value: "1" })).toEqual([]);
+  });
+
+  it("requires a value for comparing operators", () => {
+    expect(cond({ subject: "message_content", operator: "equals", value: "" })).toEqual([
+      "steps[0].value",
+    ]);
+    expect(cond({ subject: "message_content", value: "" })).toEqual(["steps[0].value"]);
+  });
+
+  it("needs no value for is_present / is_absent", () => {
+    expect(cond({ subject: "contact_field", operand: "email", operator: "is_absent" })).toEqual([]);
+    expect(cond({ subject: "tag_presence", operand: "t1", operator: "is_present" })).toEqual([]);
+  });
+
+  it("rejects an unknown operator", () => {
+    expect(
+      cond({ subject: "contact_field", operand: "email", operator: "matches", value: "x" }),
+    ).toEqual(["steps[0].operator"]);
+  });
+});
+
 describe("validateTriggerForActivation", () => {
   it("accepts a valid keyword_match config", () => {
     expect(
