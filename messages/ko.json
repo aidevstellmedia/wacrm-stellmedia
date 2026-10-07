@@ -988,6 +988,7 @@
         "name": "이름",
         "email": "이메일",
         "company": "회사",
+        "phone": "전화번호",
         "customFields": "커스텀 필드",
         "unknown": "{id} (알 수 없는 필드)"
       },
@@ -1054,10 +1055,20 @@
           "message_content": "메시지 내용",
           "time_of_day": "시간대"
         },
-        "operandLabel": "피연산자",
-        "placeholderTime": "HH:mm-HH:mm",
-        "placeholderContact": "이름 / 이메일 / 회사",
-        "placeholderTag": "태그 id",
+        "operatorLabel": "연산자",
+        "operators": {
+          "equals": "같음",
+          "contains": "포함",
+          "starts_with": "시작 문자",
+          "is_present": "비어 있지 않음",
+          "is_absent": "비어 있음"
+        },
+        "tagOperators": {
+          "is_present": "태그 있음",
+          "is_absent": "태그 없음"
+        },
+        "timeFrom": "시작",
+        "timeTo": "종료",
         "urlLabel": "URL",
         "headersLabel": "헤더",
         "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",

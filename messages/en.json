@@ -988,6 +988,7 @@
         "name": "Name",
         "email": "Email",
         "company": "Company",
+        "phone": "Phone",
         "customFields": "Custom fields",
         "unknown": "{id} (unknown field)"
       },
@@ -1054,10 +1055,20 @@
           "message_content": "Message content",
           "time_of_day": "Time of day"
         },
-        "operandLabel": "Operand",
-        "placeholderTime": "HH:mm-HH:mm",
-        "placeholderContact": "name / email / company",
-        "placeholderTag": "tag id",
+        "operatorLabel": "Operator",
+        "operators": {
+          "equals": "Equals",
+          "contains": "Contains",
+          "starts_with": "Starts with",
+          "is_present": "Is not empty",
+          "is_absent": "Is empty"
+        },
+        "tagOperators": {
+          "is_present": "Has the tag",
+          "is_absent": "Doesn't have the tag"
+        },
+        "timeFrom": "From",
+        "timeTo": "To",
         "urlLabel": "URL",
         "headersLabel": "Headers",
         "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",

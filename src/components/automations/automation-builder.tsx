@@ -192,7 +192,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case "wait":
       return { amount: 1, unit: "hours" }
     case "condition":
-      return { subject: "tag_presence", operand: "", value: "" }
+      return conditionDefaults("tag_presence")
     case "send_webhook":
       return { url: "", headers: {}, body_template: "" }
     case "close_conversation":
@@ -376,10 +376,13 @@ function ContactFieldSelect({
   value,
   onChange,
   t,
+  includePhone = false,
 }: {
   value: string
   onChange: (v: string) => void
   t: ReturnType<typeof useTranslations>
+  /** Phone is readable by conditions but not writable by update_contact_field. */
+  includePhone?: boolean
 }) {
   const { customFields } = useResources()
   const customValue = value.startsWith("custom:") ? value : ""
@@ -394,6 +397,7 @@ function ContactFieldSelect({
       <option value="name">{t("fields.name")}</option>
       <option value="email">{t("fields.email")}</option>
       <option value="company">{t("fields.company")}</option>
+      {includePhone && <option value="phone">{t("fields.phone")}</option>}
       {customFields.length > 0 && (
         <optgroup label={t("fields.customFields")}>
           {customFields.map((f) => (
@@ -1305,14 +1309,21 @@ function StepEditor({
   switch (step.step_type) {
     case "send_message":
       return (
-        <FieldBlock label={t("config.messageText")}>
-          <Textarea
-            value={(cfg.text as string) ?? ""}
-            onChange={(e) => set({ text: e.target.value })}
-            placeholder={t("config.placeholderMessageText")}
-            className="min-h-24 bg-muted text-foreground"
+        <>
+          <FieldBlock label={t("config.messageText")}>
+            <Textarea
+              value={(cfg.text as string) ?? ""}
+              onChange={(e) => set({ text: e.target.value })}
+              placeholder={t("config.placeholderMessageText")}
+              className="min-h-24 bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <WaitForReplyToggle
+            checked={cfg.wait_for_reply === true}
+            onChange={(v) => set({ wait_for_reply: v })}
+            t={t}
           />
-        </FieldBlock>
+        </>
       )
     case "send_buttons":
     case "send_list":
@@ -1335,20 +1346,11 @@ function StepEditor({
               })
             }
           />
-          <label className="flex items-start gap-2 text-xs text-foreground">
-            <input
-              type="checkbox"
-              checked={cfg.wait_for_reply === true}
-              onChange={(e) => set({ wait_for_reply: e.target.checked })}
-              className="mt-0.5 h-3.5 w-3.5 accent-primary"
-            />
-            <span>
-              {t("config.waitForReply")}
-              <span className="block text-muted-foreground">
-                {t("config.waitForReplyHint")}
-              </span>
-            </span>
-          </label>
+          <WaitForReplyToggle
+            checked={cfg.wait_for_reply === true}
+            onChange={(v) => set({ wait_for_reply: v })}
+            t={t}
+          />
         </>
       )
     case "send_template":
@@ -1467,47 +1469,7 @@ function StepEditor({
         </div>
       )
     case "condition":
-      return (
-        <>
-          <FieldBlock label={t("config.subjectLabel")}>
-            <select
-              value={(cfg.subject as string) ?? "tag_presence"}
-              onChange={(e) => set({ subject: e.target.value })}
-              className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
-            >
-              <option value="tag_presence">{t("config.subjects.tag_presence")}</option>
-              <option value="contact_field">{t("config.subjects.contact_field")}</option>
-              <option value="message_content">{t("config.subjects.message_content")}</option>
-              <option value="time_of_day">{t("config.subjects.time_of_day")}</option>
-            </select>
-          </FieldBlock>
-          <FieldBlock label={t("config.operandLabel")}>
-            <Input
-              placeholder={
-                cfg.subject === "time_of_day"
-                  ? t("config.placeholderTime")
-                  : cfg.subject === "contact_field"
-                  ? t("config.placeholderContact")
-                  : cfg.subject === "tag_presence"
-                  ? t("config.placeholderTag")
-                  : ""
-              }
-              value={(cfg.operand as string) ?? ""}
-              onChange={(e) => set({ operand: e.target.value })}
-              className="bg-muted text-foreground"
-            />
-          </FieldBlock>
-          {(cfg.subject === "contact_field" || cfg.subject === "message_content") && (
-            <FieldBlock label={t("config.valueLabel")}>
-              <Input
-                value={(cfg.value as string) ?? ""}
-                onChange={(e) => set({ value: e.target.value })}
-                className="bg-muted text-foreground"
-              />
-            </FieldBlock>
-          )}
-        </>
-      )
+      return <ConditionFields cfg={cfg} onChange={set} t={t} />
     case "send_webhook":
       return (
         <>
@@ -1538,6 +1500,179 @@ function StepEditor({
   }
 }
 
+// ------------------------------------------------------------
+// Condition (If/Else) editor
+//
+// Subject → what to test, Operator → how, Value → compared against.
+// `operand` only carries what the subject points at (tag, field, time
+// window); message_content has none.
+// ------------------------------------------------------------
+
+type ConditionSubjectValue = "tag_presence" | "contact_field" | "message_content" | "time_of_day"
+type ConditionOperatorValue = "equals" | "contains" | "starts_with" | "is_present" | "is_absent"
+
+const CONDITION_OPERATORS: Record<ConditionSubjectValue, ConditionOperatorValue[]> = {
+  tag_presence: ["is_present", "is_absent"],
+  contact_field: ["equals", "contains", "starts_with", "is_present", "is_absent"],
+  message_content: ["contains", "equals", "starts_with"],
+  time_of_day: [],
+}
+
+/** What the engine does for a condition saved without an operator. */
+const LEGACY_OPERATOR: Record<ConditionSubjectValue, ConditionOperatorValue | undefined> = {
+  tag_presence: "is_present",
+  contact_field: "equals",
+  message_content: "contains",
+  time_of_day: undefined,
+}
+
+function conditionDefaults(subject: ConditionSubjectValue): Record<string, unknown> {
+  switch (subject) {
+    case "tag_presence":
+      return { subject, operand: "", operator: "is_present" }
+    case "contact_field":
+      return { subject, operand: "name", operator: "equals", value: "" }
+    case "message_content":
+      return { subject, operator: "contains", value: "" }
+    case "time_of_day":
+      return { subject, operand: "09:00-17:00" }
+  }
+}
+
+function ConditionFields({
+  cfg,
+  onChange,
+  t,
+}: {
+  cfg: Record<string, unknown>
+  onChange: (patch: Record<string, unknown>) => void
+  t: ReturnType<typeof useTranslations>
+}) {
+  const subject = ((cfg.subject as string) ?? "tag_presence") as ConditionSubjectValue
+  const operators = CONDITION_OPERATORS[subject] ?? []
+  const operator = (cfg.operator as ConditionOperatorValue | undefined) ?? LEGACY_OPERATOR[subject]
+  const needsValue = operator === "equals" || operator === "contains" || operator === "starts_with"
+  const operand = (cfg.operand as string) ?? ""
+  const [from = "", to = ""] = operand.split("-")
+
+  return (
+    <>
+      <FieldBlock label={t("config.subjectLabel")}>
+        <select
+          value={subject}
+          // Reset the rest: a tag id or time window left in `operand`
+          // means nothing under a different subject.
+          onChange={(e) =>
+            onChange({
+              operand: undefined,
+              operator: undefined,
+              value: undefined,
+              ...conditionDefaults(e.target.value as ConditionSubjectValue),
+            })
+          }
+          className={SELECT_CLASS}
+        >
+          <option value="tag_presence">{t("config.subjects.tag_presence")}</option>
+          <option value="contact_field">{t("config.subjects.contact_field")}</option>
+          <option value="message_content">{t("config.subjects.message_content")}</option>
+          <option value="time_of_day">{t("config.subjects.time_of_day")}</option>
+        </select>
+      </FieldBlock>
+
+      {subject === "tag_presence" && (
+        <FieldBlock label={t("config.tagLabel")}>
+          <TagSelect value={operand} onChange={(v) => onChange({ operand: v })} t={t} />
+        </FieldBlock>
+      )}
+      {subject === "contact_field" && (
+        <FieldBlock label={t("config.fieldLabel")}>
+          <ContactFieldSelect
+            value={operand || "name"}
+            onChange={(v) => onChange({ operand: v })}
+            t={t}
+            includePhone
+          />
+        </FieldBlock>
+      )}
+      {subject === "time_of_day" && (
+        <div className="grid grid-cols-2 gap-2">
+          <FieldBlock label={t("config.timeFrom")}>
+            <Input
+              type="time"
+              value={from}
+              onChange={(e) => onChange({ operand: `${e.target.value}-${to}` })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <FieldBlock label={t("config.timeTo")}>
+            <Input
+              type="time"
+              value={to}
+              onChange={(e) => onChange({ operand: `${from}-${e.target.value}` })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+        </div>
+      )}
+
+      {operators.length > 0 && (
+        <FieldBlock label={t("config.operatorLabel")}>
+          <select
+            value={operator ?? operators[0]}
+            onChange={(e) => onChange({ operator: e.target.value })}
+            className={SELECT_CLASS}
+          >
+            {operators.map((op) => (
+              <option key={op} value={op}>
+                {subject === "tag_presence"
+                  ? t(`config.tagOperators.${op}`)
+                  : t(`config.operators.${op}`)}
+              </option>
+            ))}
+          </select>
+        </FieldBlock>
+      )}
+
+      {needsValue && (
+        <FieldBlock label={t("config.valueLabel")}>
+          <Input
+            value={(cfg.value as string) ?? ""}
+            onChange={(e) => onChange({ value: e.target.value })}
+            className="bg-muted text-foreground"
+          />
+        </FieldBlock>
+      )}
+    </>
+  )
+}
+
+function WaitForReplyToggle({
+  checked,
+  onChange,
+  t,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  t: ReturnType<typeof useTranslations>
+}) {
+  return (
+    <label className="flex items-start gap-2 text-xs text-foreground">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+      />
+      <span>
+        {t("config.waitForReply")}
+        <span className="block text-muted-foreground">
+          {t("config.waitForReplyHint")}
+        </span>
+      </span>
+    </label>
+  )
+}
+
 function FieldBlock({
   label,
   children,
@@ -1553,10 +1688,26 @@ function FieldBlock({
   )
 }
 
+function conditionPreview(cfg: Record<string, unknown>): string {
+  const subject = (cfg.subject as ConditionSubjectValue | undefined) ?? "tag_presence"
+  const operator = (cfg.operator as string | undefined) ?? LEGACY_OPERATOR[subject]
+  if (subject === "time_of_day") return `when time is ${cfg.operand || "?"}`
+  const parts = ["when", subject]
+  if (subject === "contact_field" && cfg.operand) parts.push(String(cfg.operand))
+  if (operator) parts.push(operator)
+  if (operator !== "is_present" && operator !== "is_absent" && cfg.value) {
+    parts.push(`"${cfg.value}"`)
+  }
+  return parts.join(" ")
+}
+
 function previewFor(step: BuilderStep): string {
   switch (step.step_type) {
     case "send_message":
-      return (step.step_config.text as string) || "no text yet"
+      return (
+        ((step.step_config.text as string) || "no text yet") +
+        (step.step_config.wait_for_reply ? " · waits for reply" : "")
+      )
     case "send_buttons":
     case "send_list":
       return (
@@ -1568,7 +1719,7 @@ function previewFor(step: BuilderStep): string {
     case "wait":
       return `${step.step_config.amount ?? "?"} ${step.step_config.unit ?? ""}`
     case "condition":
-      return `when ${step.step_config.subject ?? "?"}`
+      return conditionPreview(step.step_config)
     case "send_webhook":
       return (step.step_config.url as string) || "no url"
     default:

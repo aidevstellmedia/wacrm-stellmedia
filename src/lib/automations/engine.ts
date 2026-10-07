@@ -3,6 +3,7 @@ import type {
   AutomationLogStepResult,
   AutomationStep,
   AutomationTriggerType,
+  ConditionOperator,
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
@@ -599,13 +600,15 @@ async function runResumed(args: ExecuteArgs): Promise<void> {
   }
 }
 
+const REPLY_WAITING_STEPS = new Set(['send_message', 'send_buttons', 'send_list'])
+
 function waitsForReply(step: AutomationStep): boolean {
-  if (step.step_type !== 'send_buttons' && step.step_type !== 'send_list') return false
-  return (step.step_config as SendButtonsStepConfig).wait_for_reply === true
+  if (!REPLY_WAITING_STEPS.has(step.step_type)) return false
+  return (step.step_config as SendMessageStepConfig | SendButtonsStepConfig).wait_for_reply === true
 }
 
 /**
- * Park the run after an interactive send until the contact replies.
+ * Park the run after a send until the contact replies.
  * The newest menu wins: any other run already waiting on this contact
  * is superseded, so a reply can never resume a stale menu.
  */
@@ -1026,6 +1029,35 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
   return true
 }
 
+/** Contact columns a contact_field condition may read. */
+const CONDITION_CONTACT_COLUMNS = new Set(['name', 'email', 'company', 'phone'])
+
+/**
+ * Apply a condition operator. Text comparisons ignore case and
+ * surrounding whitespace, so a customer typing " Seo" matches "seo".
+ * Exported for direct unit testing.
+ */
+export function compareConditionValue(
+  actual: unknown,
+  operator: ConditionOperator,
+  expected: string | undefined,
+): boolean {
+  const a = actual == null ? '' : String(actual).trim().toLowerCase()
+  if (operator === 'is_present') return a !== ''
+  if (operator === 'is_absent') return a === ''
+  const e = (expected ?? '').trim().toLowerCase()
+  switch (operator) {
+    case 'equals':
+      return a === e
+    case 'contains':
+      return a.includes(e)
+    case 'starts_with':
+      return a.startsWith(e)
+    default:
+      return false
+  }
+}
+
 async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
   const db = supabaseAdmin()
   switch (cfg.subject) {
@@ -1039,24 +1071,27 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
         .select('id', { count: 'exact', head: true })
         .eq('contact_id', args.contactId)
         .eq('tag_id', cfg.operand)
-      return (count ?? 0) > 0
+      const has = (count ?? 0) > 0
+      return cfg.operator === 'is_absent' ? !has : has
     }
     case 'contact_field': {
       if (!args.contactId || !cfg.operand) return false
-      // Scope to the account so the condition can't be turned into a
-      // cross-tenant read oracle via the service-role client.
-      const { data } = await db
-        .from('contacts')
-        .select(cfg.operand)
-        .eq('id', args.contactId)
-        .eq('account_id', args.automation.account_id)
-        .maybeSingle()
-      const v = (data as Record<string, unknown> | null)?.[cfg.operand]
-      return v != null && String(v) === String(cfg.value ?? '')
+      const actual = await readContactField(cfg.operand, args)
+      if (actual === undefined) return false
+      if (!cfg.operator) {
+        // Saved before operators existed: exact, case-sensitive equals.
+        return actual != null && String(actual) === String(cfg.value ?? '')
+      }
+      return compareConditionValue(actual, cfg.operator, cfg.value)
     }
     case 'message_content': {
-      const text = (args.context.message_text ?? '').toString()
-      return text.toLowerCase().includes((cfg.value ?? '').toLowerCase())
+      if (!cfg.operator) {
+        // Saved before operators existed: case-insensitive contains,
+        // whitespace kept as typed.
+        const text = (args.context.message_text ?? '').toString()
+        return text.toLowerCase().includes((cfg.value ?? '').toLowerCase())
+      }
+      return compareConditionValue(args.context.message_text, cfg.operator, cfg.value)
     }
     case 'time_of_day': {
       // operand form "HH:mm-HH:mm" — true if now is within that window
@@ -1076,6 +1111,48 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
     default:
       return false
   }
+}
+
+/**
+ * Read one contact field for a condition: a built-in column, or a custom
+ * field encoded as `custom:<custom_field_id>` (the same encoding
+ * update_contact_field writes). Returns undefined for a field that
+ * conditions can't read, null when the contact has no value.
+ */
+async function readContactField(field: string, args: ExecuteArgs): Promise<unknown> {
+  const db = supabaseAdmin()
+  if (field.startsWith('custom:')) {
+    const customFieldId = field.slice('custom:'.length)
+    if (!customFieldId) return undefined
+    // Defense in depth: the service-role client bypasses RLS, so confirm
+    // the field definition belongs to this account before reading.
+    const { data: def } = await db
+      .from('custom_fields')
+      .select('id')
+      .eq('id', customFieldId)
+      .eq('account_id', args.automation.account_id)
+      .maybeSingle()
+    if (!def) return undefined
+    const { data } = await db
+      .from('contact_custom_values')
+      .select('value')
+      .eq('contact_id', args.contactId)
+      .eq('custom_field_id', customFieldId)
+      .maybeSingle()
+    return (data as { value?: unknown } | null)?.value ?? null
+  }
+  // A fixed allow-list rather than the raw operand, so the condition
+  // can't select arbitrary columns through the service-role client.
+  if (!CONDITION_CONTACT_COLUMNS.has(field)) return undefined
+  // Scope to the account so the condition can't be turned into a
+  // cross-tenant read oracle via the service-role client.
+  const { data } = await db
+    .from('contacts')
+    .select(field)
+    .eq('id', args.contactId)
+    .eq('account_id', args.automation.account_id)
+    .maybeSingle()
+  return (data as Record<string, unknown> | null)?.[field] ?? null
 }
 
 function waitMs(cfg: WaitStepConfig): number {

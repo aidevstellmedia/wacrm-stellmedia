@@ -4,8 +4,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // so the vi.mock factory below can close over it.
 const h = vi.hoisted(() => ({
   state: {
-    owned: null as { id: string } | null,
+    owned: null as ({ id: string } & Record<string, unknown>) | null,
     ownedCustomField: null as { id: string } | null,
+    /** Row a `contact_custom_values` read resolves. */
+    customValue: null as { value: string } | null,
+    /** Count a `contact_tags` presence check resolves. */
+    tagCount: 0,
     /** Row the account-scoped `conversations` lookup resolves. */
     ownedConversation: null as { id: string } | null,
     automations: [] as Record<string, unknown>[],
@@ -84,7 +88,10 @@ vi.mock("./admin-client", () => {
         state.upsertCalls.push({ table, payload: ops.payload });
         return { data: null, error: null };
       }
-      return { data: null, error: null };
+      return { data: state.customValue, error: null };
+    }
+    if (table === "contact_tags") {
+      return { data: null, count: state.tagCount, error: null };
     }
     if (table === "automations") {
       // The dispatch list query (no id filter) keeps returning every row,
@@ -160,6 +167,7 @@ vi.mock("./meta-send", () => ({
 }));
 
 import {
+  compareConditionValue,
   expireAwaitingReplies,
   resumeAwaitingReply,
   runAutomationsForTrigger,
@@ -173,6 +181,8 @@ const ACCOUNT = "acct-1";
 beforeEach(() => {
   h.state.owned = null;
   h.state.ownedCustomField = null;
+  h.state.customValue = null;
+  h.state.tagCount = 0;
   h.state.ownedConversation = null;
   h.state.automations = [];
   h.state.steps = [];
@@ -884,6 +894,49 @@ describe("wait_for_reply", () => {
     expect(sentTexts()).toEqual(["Other options", "Thanks for contacting"]);
   });
 
+  // A plain-text numbered menu ("1️⃣ … 2️⃣ … 3️⃣ …") followed by an
+  // if / else-if / else ladder on what the customer typed back.
+  function textMenuLadder(wait: boolean) {
+    return [
+      step("menu", "send_message", 0, {
+        text: "What would you like help with?\n1️⃣ Lead Generation\n2️⃣ SEO\n3️⃣ Ads",
+        ...(wait ? { wait_for_reply: true } : {}),
+      }),
+      step("if1", "condition", 1, contains("1")),
+      step("say1", "send_message", 0, say("you selected 1"), { id: "if1", branch: "yes" }),
+      step("if2", "condition", 0, contains("2"), { id: "if1", branch: "no" }),
+      step("say2", "send_message", 0, say("you selected 2"), { id: "if2", branch: "yes" }),
+      step("if3", "condition", 0, contains("3"), { id: "if2", branch: "no" }),
+      step("say3", "send_message", 0, say("you selected 3"), { id: "if3", branch: "yes" }),
+      step("else", "send_message", 0, say("Thank you for reaching out"), { id: "if3", branch: "no" }),
+    ];
+  }
+
+  it("parks after a plain Send Message menu with wait_for_reply", async () => {
+    h.state.steps = textMenuLadder(true);
+
+    await trigger("Hii");
+
+    expect(sentTexts()).toHaveLength(1);
+    expect(h.state.pending).toHaveLength(1);
+    expect(h.state.pending[0]).toMatchObject({ status: "awaiting_reply", next_step_position: 1 });
+  });
+
+  it.each([
+    ["1", "you selected 1"],
+    ["2", "you selected 2"],
+    ["3", "you selected 3"],
+    ["hello", "Thank you for reaching out"],
+  ])("routes the typed reply %j through the if/else-if ladder", async (typed, expected) => {
+    h.state.steps = textMenuLadder(true);
+    await trigger("Hii");
+    vi.mocked(engineSendText).mockClear();
+
+    await reply(typed);
+
+    expect(sentTexts()).toEqual([expected]);
+  });
+
   it("expires lapsed waits and explains why on the log", async () => {
     h.state.steps = userMenu();
     await trigger("Hii");
@@ -894,5 +947,108 @@ describe("wait_for_reply", () => {
     expect(expired).toBe(1);
     expect(h.state.pending[0].status).toBe("expired");
     expect(h.state.logUpdates.at(-1)).toEqual({ error_message: "no reply within 24h" });
+  });
+});
+
+// ------------------------------------------------------------
+// Condition operators
+// ------------------------------------------------------------
+
+describe("compareConditionValue", () => {
+  it("compares text ignoring case and surrounding whitespace", () => {
+    expect(compareConditionValue(" SEO ", "equals", "seo")).toBe(true);
+    expect(compareConditionValue("I want seo help", "contains", "SEO")).toBe(true);
+    expect(compareConditionValue("2 please", "starts_with", "2")).toBe(true);
+    expect(compareConditionValue("please 2", "starts_with", "2")).toBe(false);
+    expect(compareConditionValue("12", "equals", "1")).toBe(false);
+  });
+
+  it("treats null, undefined and blank as absent", () => {
+    for (const v of [null, undefined, "", "   "]) {
+      expect(compareConditionValue(v, "is_absent", undefined)).toBe(true);
+      expect(compareConditionValue(v, "is_present", undefined)).toBe(false);
+    }
+    expect(compareConditionValue("a@b.com", "is_present", undefined)).toBe(true);
+  });
+});
+
+describe("condition step operators", () => {
+  const auto = {
+    id: "a1",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    trigger_type: "new_message_received",
+    trigger_config: {},
+    is_active: true,
+  };
+
+  function branchOn(step_config: Record<string, unknown>) {
+    h.state.steps = [
+      { id: "c", automation_id: "a1", step_type: "condition", position: 0, parent_step_id: null, branch: null, step_config },
+      { id: "y", automation_id: "a1", step_type: "send_message", position: 0, parent_step_id: "c", branch: "yes", step_config: { text: "yes" } },
+      { id: "n", automation_id: "a1", step_type: "send_message", position: 0, parent_step_id: "c", branch: "no", step_config: { text: "no" } },
+    ];
+  }
+
+  async function run(text = "hi") {
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { message_text: text, conversation_id: "conv1" },
+    });
+    return vi.mocked(engineSendText).mock.calls.map(([a]) => (a as { text: string }).text);
+  }
+
+  beforeEach(() => {
+    h.state.owned = { id: "c1" };
+    h.state.ownedConversation = { id: "conv1" };
+    h.state.automations = [auto];
+  });
+
+  it("message_content equals matches the whole reply only", async () => {
+    branchOn({ subject: "message_content", operator: "equals", value: "1" });
+    expect(await run(" 1 ")).toEqual(["yes"]);
+    vi.mocked(engineSendText).mockClear();
+    expect(await run("12")).toEqual(["no"]);
+  });
+
+  it("keeps legacy message_content (no operator) as contains, ignoring a typed operand", async () => {
+    branchOn({ subject: "message_content", operand: "contains", value: "Lead" });
+    expect(await run("lead generation")).toEqual(["yes"]);
+  });
+
+  it("contact_field is_absent takes YES when the field is empty", async () => {
+    h.state.owned = { id: "c1", email: "" };
+    branchOn({ subject: "contact_field", operand: "email", operator: "is_absent" });
+    expect(await run()).toEqual(["yes"]);
+  });
+
+  it("keeps legacy contact_field (no operator) as exact equals", async () => {
+    h.state.owned = { id: "c1", company: "Acme" };
+    branchOn({ subject: "contact_field", operand: "company", value: "acme" });
+    expect(await run()).toEqual(["no"]);
+  });
+
+  it("reads a custom field for contact_field conditions", async () => {
+    h.state.ownedCustomField = { id: "f1" };
+    h.state.customValue = { value: "Gold" };
+    branchOn({ subject: "contact_field", operand: "custom:f1", operator: "equals", value: "gold" });
+    expect(await run()).toEqual(["yes"]);
+  });
+
+  it("refuses to read a column outside the allow-list", async () => {
+    h.state.owned = { id: "c1", account_id: ACCOUNT };
+    branchOn({ subject: "contact_field", operand: "account_id", operator: "is_present" });
+    expect(await run()).toEqual(["no"]);
+  });
+
+  it("tag_presence is_absent negates the tag check", async () => {
+    h.state.tagCount = 0;
+    branchOn({ subject: "tag_presence", operand: "t1", operator: "is_absent" });
+    expect(await run()).toEqual(["yes"]);
+    vi.mocked(engineSendText).mockClear();
+    h.state.tagCount = 1;
+    expect(await run()).toEqual(["no"]);
   });
 });

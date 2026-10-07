@@ -988,6 +988,7 @@
         "name": "Nome",
         "email": "E-mail",
         "company": "Empresa",
+        "phone": "Telefone",
         "customFields": "Campos personalizados",
         "unknown": "{id} (campo desconhecido)"
       },
@@ -1054,10 +1055,20 @@
           "message_content": "Conteúdo da mensagem",
           "time_of_day": "Hora do dia"
         },
-        "operandLabel": "Operando",
-        "placeholderTime": "HH:mm-HH:mm",
-        "placeholderContact": "name / email / company",
-        "placeholderTag": "id da tag",
+        "operatorLabel": "Operador",
+        "operators": {
+          "equals": "É igual a",
+          "contains": "Contém",
+          "starts_with": "Começa com",
+          "is_present": "Não está vazio",
+          "is_absent": "Está vazio"
+        },
+        "tagOperators": {
+          "is_present": "Tem a tag",
+          "is_absent": "Não tem a tag"
+        },
+        "timeFrom": "De",
+        "timeTo": "Até",
         "urlLabel": "URL",
         "headersLabel": "Cabeçalhos",
         "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",

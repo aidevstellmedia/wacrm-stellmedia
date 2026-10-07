@@ -542,6 +542,9 @@ export type AutomationTriggerConfig =
 
 export interface SendMessageStepConfig {
   text: string;
+  /** Park after the send until the contact replies — for a typed
+   *  numbered menu. Same semantics as InteractiveStepOptions below. */
+  wait_for_reply?: boolean;
 }
 
 /**
@@ -606,11 +609,23 @@ export type ConditionSubject =
   | 'message_content'
   | 'time_of_day';
 
+export type ConditionOperator =
+  | 'equals'
+  | 'contains'
+  | 'starts_with'
+  | 'is_present'
+  | 'is_absent';
+
 export interface ConditionStepConfig {
   subject: ConditionSubject;
-  /** e.g. field name, tag id, substring, or "HH:mm-HH:mm" depending on subject */
+  /** What the subject points at: contact field name (or `custom:<id>`),
+   *  tag id, or "HH:mm-HH:mm". Unused for message_content. */
   operand?: string;
-  /** For contact_field equals / message_content contains — comparison value */
+  /** How to compare. Absent on automations saved before it existed —
+   *  the engine then falls back to the old fixed behaviour per subject
+   *  (message_content contains, contact_field equals, tag is_present). */
+  operator?: ConditionOperator;
+  /** Comparison value for equals / contains / starts_with. */
   value?: string;
 }
 
