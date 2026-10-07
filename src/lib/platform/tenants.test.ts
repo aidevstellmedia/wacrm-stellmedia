@@ -21,7 +21,7 @@ function builder(table: string) {
     };
   }
   b.eq = (k: string, v: unknown) => ((call.filters[k] = v), b);
-  b.in = b.order = b.limit = () => b;
+  b.in = b.order = b.limit = b.is = () => b;
   const run = () => {
     calls.push(call);
     if (call.op === "delete") order.push(`delete:${call.table}`);
@@ -37,7 +37,7 @@ vi.mock("./admin-client", () => ({
   platformAdmin: () => ({ from: builder, auth: { admin: { inviteUserByEmail: invite, getUserById, deleteUser } } }),
 }));
 
-import { addTenantDomain, completeTenantSetup, createTenant, deleteUnassignedUser, listTenantMembers, listTenants, listUnassignedUsers, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
+import { addTenantDomain, completeTenantSetup, createTenant, deleteUnassignedUser, PartialDeleteError, listTenantMembers, listTenants, listUnassignedUsers, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
 
 beforeEach(() => {
   calls.length = 0;
@@ -252,6 +252,14 @@ describe("listUnassignedUsers", () => {
   });
 });
 
+describe("listUnassignedUsers errors", () => {
+  it("throws when the auth lookup fails", async () => {
+    handler = (c) => (c.table === "accounts" ? { data: acctRows } : undefined);
+    getUserById.mockResolvedValue({ data: null, error: { message: "auth down" } });
+    await expect(listUnassignedUsers()).rejects.toThrow("auth down");
+  });
+});
+
 describe("deleteUnassignedUser", () => {
   const stray = (over: Partial<Record<string, unknown>> = {}) => (c: Call): Res | undefined => {
     if (c.table === "accounts") return { data: { id: "a1", owner_user_id: "u1" } };
@@ -284,6 +292,53 @@ describe("deleteUnassignedUser", () => {
   it("refuses when data is present", async () => {
     handler = stray({ dataTable: "contacts" });
     await expect(deleteUnassignedUser("a1")).rejects.toThrow("This account has data and can't be deleted.");
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses when a pending invitation exists", async () => {
+    handler = stray({ dataTable: "account_invitations" });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow("This account has data and can't be deleted.");
+    expect(deleted()).toBe(false);
+  });
+
+  it.each(["api_keys", "webhook_endpoints", "quick_replies", "deals", "ai_configs", "ai_knowledge_documents"])(
+    "refuses when %s has rows", async (t) => {
+      handler = stray({ dataTable: t });
+      await expect(deleteUnassignedUser("a1")).rejects.toThrow(/has data/);
+      expect(deleted()).toBe(false);
+    },
+  );
+
+  it("refuses if membership changed just before deleting", async () => {
+    let reads = 0;
+    handler = (c) => {
+      if (c.table === "profiles") return { data: ++reads === 1 ? [{ user_id: "u1", email: "x@y.com" }] : [{ user_id: "u1" }, { user_id: "u2" }] };
+      return stray()(c);
+    };
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow(/changed while deleting/);
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses if the sole profile is not the owner", async () => {
+    handler = (c) => (c.table === "profiles" ? { data: [{ user_id: "other", email: "o@y.com" }] } : stray()(c));
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow(/changed while deleting/);
+    expect(deleted()).toBe(false);
+  });
+
+  it("throws a PartialDeleteError when the auth user cannot be deleted after the account", async () => {
+    handler = stray();
+    deleteUser.mockResolvedValueOnce({ error: { message: "nope" } });
+    const err = await deleteUnassignedUser("a1").catch((e) => e);
+    expect(err).toBeInstanceOf(PartialDeleteError);
+    expect(err.ownerUserId).toBe("u1");
+    expect(err.message).toMatch(/Account removed, but the login could not be deleted \(user u1\)/);
+    expect(order[0]).toBe("delete:accounts");
+  });
+
+  it("throws and deletes nothing when the auth lookup fails", async () => {
+    handler = stray();
+    getUserById.mockResolvedValue({ data: null, error: { message: "auth down" } });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow("auth down");
     expect(deleted()).toBe(false);
   });
 

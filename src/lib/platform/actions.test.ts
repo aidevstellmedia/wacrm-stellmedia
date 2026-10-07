@@ -10,8 +10,15 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("./tenants", () => {
   class PlatformError extends Error {}
+  class PartialDeleteError extends PlatformError {
+    partial = true;
+    constructor(public accountId: string, public ownerUserId: string, public cause_: string) {
+      super("partial");
+    }
+  }
   return {
     PlatformError,
+    PartialDeleteError,
     createTenant: vi.fn(async () => ({ accountId: "acc-1" })),
     completeTenantSetup: vi.fn(),
     updateTenantBranding: vi.fn(),
@@ -76,6 +83,16 @@ describe("platform actions", () => {
     expect(res.ok).toBe(true);
     expect(tenants.deleteUnassignedUser).toHaveBeenCalledWith("acc");
     expect(tenants.writeAudit).toHaveBeenCalledWith("u1", "user.delete_unassigned", null, { accountId: "acc", email: "x@y.com" });
+  });
+
+  it("deleteUnassignedUserAction audits a partial failure before returning the error", async () => {
+    vi.mocked(tenants.deleteUnassignedUser).mockRejectedValueOnce(new tenants.PartialDeleteError("acc", "u9", "boom"));
+    const res = await actions.deleteUnassignedUserAction(prev, fd({ accountId: "acc" }));
+    expect(res.error).toBe("partial");
+    expect(tenants.writeAudit).toHaveBeenCalledWith("u1", "user.delete_unassigned_partial", null, {
+      accountId: "acc", ownerUserId: "u9", error: "boom",
+    });
+    expect(tenants.writeAudit).not.toHaveBeenCalledWith("u1", "user.delete_unassigned", expect.anything(), expect.anything());
   });
 
   it("returns PlatformError messages as state", async () => {

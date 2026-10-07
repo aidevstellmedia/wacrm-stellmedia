@@ -171,7 +171,17 @@ export async function deleteUnassignedUserAction(_: ActionState, fd: FormData): 
   if (!accountId) return { error: "Missing account." };
 
   const res = await run(async () => {
-    const { email } = await tenants.deleteUnassignedUser(accountId);
+    let email: string | null;
+    try {
+      ({ email } = await tenants.deleteUnassignedUser(accountId));
+    } catch (e) {
+      if (e instanceof tenants.PartialDeleteError) {
+        await tenants.writeAudit(admin.userId, "user.delete_unassigned_partial", null, {
+          accountId, ownerUserId: e.ownerUserId, error: e.cause_,
+        });
+      }
+      throw e;
+    }
     await tenants.writeAudit(admin.userId, "user.delete_unassigned", null, { accountId, email });
   });
   if (res.ok) revalidatePath("/admin");

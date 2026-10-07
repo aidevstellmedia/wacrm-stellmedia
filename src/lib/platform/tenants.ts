@@ -7,6 +7,16 @@ import { readPlatformConfig, tenantOrigin, tenantSubdomainHost } from "./config"
 
 export class PlatformError extends Error {}
 
+/** The account row is gone but its auth user could not be deleted. */
+export class PartialDeleteError extends PlatformError {
+  readonly partial = true;
+  constructor(readonly accountId: string, readonly ownerUserId: string, readonly cause_: string) {
+    super(
+      `Account removed, but the login could not be deleted (user ${ownerUserId}). Delete it in Supabase → Authentication.`,
+    );
+  }
+}
+
 export interface TenantListRow {
   accountId: string;
   name: string;
@@ -146,10 +156,14 @@ export async function listUnassignedUsers(): Promise<UnassignedUser[]> {
   );
 }
 
-// Same table list redeem_invitation (019) uses to decide an account is empty.
+// The table list redeem_invitation (019) uses, plus later account-scoped tables
+// (api_keys 026, webhook_endpoints 028, ai_configs 029, ai_knowledge_documents 030,
+// quick_replies 035, deals 001). Pure log tables (ai_usage_log) and chunks (cascade
+// from documents) are skipped. Pending invitations are checked separately.
 const DATA_TABLES = [
   "contacts", "conversations", "broadcasts", "automations", "flows", "pipelines",
   "message_templates", "tags", "custom_fields", "contact_notes", "whatsapp_config",
+  "api_keys", "webhook_endpoints", "quick_replies", "deals", "ai_configs", "ai_knowledge_documents",
 ] as const;
 
 export async function deleteUnassignedUser(accountId: string): Promise<{ email: string | null }> {
@@ -178,11 +192,20 @@ export async function deleteUnassignedUser(accountId: string): Promise<{ email: 
   if (profErr) throw new Error(profErr.message);
   if ((profs ?? []).length !== 1) throw new PlatformError("This account has other members and can't be deleted.");
 
-  const found = await Promise.all(
-    DATA_TABLES.map((t) => db().from(t).select("account_id").eq("account_id", accountId).limit(1)),
-  );
+  const found = await Promise.all([
+    ...DATA_TABLES.map((t) => db().from(t).select("account_id").eq("account_id", accountId).limit(1)),
+    // Pending outgoing invitations count as data.
+    db().from("account_invitations").select("account_id").eq("account_id", accountId).is("accepted_at", null).limit(1),
+  ]);
   for (const r of found) if (r.error) throw new Error(r.error.message);
   if (found.some((r) => (r.data ?? []).length > 0)) throw new PlatformError("This account has data and can't be deleted.");
+
+  // Re-check right before deleting (membership may have changed since the first read).
+  const { data: again, error: againErr } = await db().from("profiles").select("user_id").eq("account_id", accountId);
+  if (againErr) throw new Error(againErr.message);
+  if ((again ?? []).length !== 1 || again![0].user_id !== ownerUserId) {
+    throw new PlatformError("This account changed while deleting; refresh and try again.");
+  }
 
   // Account first: accounts.owner_user_id is ON DELETE RESTRICT, so the auth
   // user can't go while the account exists. Deleting the account cascades the
@@ -190,7 +213,7 @@ export async function deleteUnassignedUser(accountId: string): Promise<{ email: 
   const { error: delAcctErr } = await db().from("accounts").delete().eq("id", accountId);
   if (delAcctErr) throw new Error(delAcctErr.message);
   const { error: delUserErr } = await db().auth.admin.deleteUser(ownerUserId);
-  if (delUserErr) throw new Error(delUserErr.message);
+  if (delUserErr) throw new PartialDeleteError(accountId, ownerUserId, delUserErr.message);
   return { email: (profs![0].email as string) ?? null };
 }
 
@@ -204,6 +227,8 @@ export async function listTenantMembers(accountId: string): Promise<
     .from("profiles")
     .select("user_id, email, full_name, account_role")
     .eq("account_id", accountId)
+    .order("account_role")
+    .order("email")
     .limit(200);
   if (error) throw new Error(error.message);
   const rank = (r: string) => {
