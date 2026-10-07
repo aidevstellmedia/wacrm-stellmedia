@@ -1,0 +1,1 @@
+insert into platform_admins (user_id) select id from auth.users where email = 'admin@stellmedia.com';
