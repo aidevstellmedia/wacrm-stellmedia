@@ -34,6 +34,36 @@ export async function writeAudit(
   if (error) console.error("[platform] audit write failed:", error.message);
 }
 
+type AccountKind = "tenant" | "incomplete-client" | "stray" | "admin";
+
+/**
+ * Single source of truth for what an account is, used by listTenants,
+ * listUnassignedUsers and deleteUnassignedUser so they can never disagree.
+ *  - tenant: has a tenant_settings row.
+ *  - admin: settings-less account owned by a platform admin (hidden everywhere).
+ *  - incomplete-client: settings-less, owner tagged platform_client_owner by createTenant.
+ *  - stray: settings-less, untagged, non-admin (e.g. an unused invite signup).
+ * Only owners of settings-less, non-admin accounts are looked up in auth.
+ */
+async function classifyAccounts(
+  accounts: { id: string; owner_user_id: string }[],
+  settingsIds: Set<string>,
+  adminIds: Set<string>,
+): Promise<Map<string, AccountKind>> {
+  const kinds = new Map<string, AccountKind>();
+  await Promise.all(
+    accounts.map(async (a) => {
+      if (settingsIds.has(a.id)) return void kinds.set(a.id, "tenant");
+      if (adminIds.has(a.owner_user_id)) return void kinds.set(a.id, "admin");
+      const { data, error } = await db().auth.admin.getUserById(a.owner_user_id);
+      if (error) throw new Error(error.message);
+      const tagged = data?.user?.user_metadata?.platform_client_owner === true;
+      kinds.set(a.id, tagged ? "incomplete-client" : "stray");
+    }),
+  );
+  return kinds;
+}
+
 export async function listTenants(): Promise<TenantListRow[]> {
   // Fine at tens of tenants; paginate if this grows past a few hundred.
   const [accounts, settings, domains, profiles, configs, admins] = await Promise.all([
@@ -47,12 +77,17 @@ export async function listTenants(): Promise<TenantListRow[]> {
   for (const r of [accounts, settings, domains, profiles, configs, admins]) if (r.error) throw new Error(r.error.message);
 
   const settingsBy = new Map((settings.data ?? []).map((s) => [s.account_id as string, s]));
-  // A platform admin's own personal account is not a client: hide it unless
-  // it has actually been set up as a tenant.
   const adminIds = new Set((admins.data ?? []).map((a) => a.user_id as string));
-  const visible = (accounts.data ?? []).filter(
-    (a) => settingsBy.has(a.id) || !adminIds.has(a.owner_user_id as string),
+  const kinds = await classifyAccounts(
+    (accounts.data ?? []).map((a) => ({ id: a.id as string, owner_user_id: a.owner_user_id as string })),
+    new Set(settingsBy.keys()),
+    adminIds,
   );
+  // Admin personal accounts and stray signups are not clients.
+  const visible = (accounts.data ?? []).filter((a) => {
+    const k = kinds.get(a.id);
+    return k === "tenant" || k === "incomplete-client";
+  });
   return visible.map((a) => {
     const s = settingsBy.get(a.id);
     return {
@@ -66,6 +101,133 @@ export async function listTenants(): Promise<TenantListRow[]> {
       createdAt: a.created_at,
     };
   });
+}
+
+export interface UnassignedUser {
+  accountId: string;
+  ownerUserId: string;
+  email: string | null;
+  name: string;
+  createdAt: string;
+  lastSignInAt: string | null;
+}
+
+/** Accounts that are neither clients nor admin-owned: signups that never joined a client. */
+export async function listUnassignedUsers(): Promise<UnassignedUser[]> {
+  const [accounts, settings, admins] = await Promise.all([
+    db().from("accounts").select("id, name, owner_user_id, created_at").order("created_at", { ascending: false }),
+    db().from("tenant_settings").select("account_id"),
+    db().from("platform_admins").select("user_id"),
+  ]);
+  for (const r of [accounts, settings, admins]) if (r.error) throw new Error(r.error.message);
+  const rows = (accounts.data ?? []).map((a) => ({
+    id: a.id as string, name: a.name as string, owner_user_id: a.owner_user_id as string, created_at: a.created_at as string,
+  }));
+  const kinds = await classifyAccounts(
+    rows,
+    new Set((settings.data ?? []).map((s) => s.account_id as string)),
+    new Set((admins.data ?? []).map((a) => a.user_id as string)),
+  );
+  const strays = rows.filter((a) => kinds.get(a.id) === "stray");
+  const emails = await emailsByUserId(strays.map((a) => a.owner_user_id));
+  return Promise.all(
+    strays.map(async (a) => {
+      const { data, error } = await db().auth.admin.getUserById(a.owner_user_id);
+      if (error) throw new Error(error.message);
+      return {
+        accountId: a.id,
+        ownerUserId: a.owner_user_id,
+        email: emails.get(a.owner_user_id) ?? null,
+        name: a.name,
+        createdAt: a.created_at,
+        lastSignInAt: data?.user?.last_sign_in_at ?? null,
+      };
+    }),
+  );
+}
+
+// Same table list redeem_invitation (019) uses to decide an account is empty.
+const DATA_TABLES = [
+  "contacts", "conversations", "broadcasts", "automations", "flows", "pipelines",
+  "message_templates", "tags", "custom_fields", "contact_notes", "whatsapp_config",
+] as const;
+
+export async function deleteUnassignedUser(accountId: string): Promise<{ email: string | null }> {
+  const clientErr = () => new PlatformError("This account belongs to a client and can't be deleted here.");
+  const { data: acct, error: acctErr } = await db()
+    .from("accounts").select("id, owner_user_id").eq("id", accountId).maybeSingle();
+  if (acctErr) throw new Error(acctErr.message);
+  if (!acct) throw new PlatformError("Account not found.");
+  const ownerUserId = acct.owner_user_id as string;
+
+  const [settings, admin] = await Promise.all([
+    db().from("tenant_settings").select("account_id").eq("account_id", accountId).maybeSingle(),
+    db().from("platform_admins").select("user_id").eq("user_id", ownerUserId).maybeSingle(),
+  ]);
+  if (settings.error) throw new Error(settings.error.message);
+  if (admin.error) throw new Error(admin.error.message);
+  const kinds = await classifyAccounts(
+    [{ id: accountId, owner_user_id: ownerUserId }],
+    new Set(settings.data ? [accountId] : []),
+    new Set(admin.data ? [ownerUserId] : []),
+  );
+  if (kinds.get(accountId) !== "stray") throw clientErr();
+
+  const { data: profs, error: profErr } = await db()
+    .from("profiles").select("user_id, email").eq("account_id", accountId);
+  if (profErr) throw new Error(profErr.message);
+  if ((profs ?? []).length !== 1) throw new PlatformError("This account has other members and can't be deleted.");
+
+  const found = await Promise.all(
+    DATA_TABLES.map((t) => db().from(t).select("account_id").eq("account_id", accountId).limit(1)),
+  );
+  for (const r of found) if (r.error) throw new Error(r.error.message);
+  if (found.some((r) => (r.data ?? []).length > 0)) throw new PlatformError("This account has data and can't be deleted.");
+
+  // Account first: accounts.owner_user_id is ON DELETE RESTRICT, so the auth
+  // user can't go while the account exists. Deleting the account cascades the
+  // profile row (profiles.account_id ON DELETE CASCADE). Then delete the auth user.
+  const { error: delAcctErr } = await db().from("accounts").delete().eq("id", accountId);
+  if (delAcctErr) throw new Error(delAcctErr.message);
+  const { error: delUserErr } = await db().auth.admin.deleteUser(ownerUserId);
+  if (delUserErr) throw new Error(delUserErr.message);
+  return { email: (profs![0].email as string) ?? null };
+}
+
+const ROLE_ORDER = ["owner", "admin", "agent", "viewer"];
+
+export async function listTenantMembers(accountId: string): Promise<
+  { userId: string; email: string | null; fullName: string | null; role: string; lastSignInAt: string | null }[]
+> {
+  // Capped at 200 members; fine at this scale (one auth lookup per member).
+  const { data, error } = await db()
+    .from("profiles")
+    .select("user_id, email, full_name, account_role")
+    .eq("account_id", accountId)
+    .limit(200);
+  if (error) throw new Error(error.message);
+  const rank = (r: string) => {
+    const i = ROLE_ORDER.indexOf(r);
+    return i === -1 ? ROLE_ORDER.length : i;
+  };
+  const sorted = [...(data ?? [])].sort(
+    (a, b) =>
+      rank(a.account_role as string) - rank(b.account_role as string) ||
+      String(a.email ?? "").localeCompare(String(b.email ?? "")),
+  );
+  return Promise.all(
+    sorted.map(async (p) => {
+      const { data: u, error: uErr } = await db().auth.admin.getUserById(p.user_id as string);
+      if (uErr) throw new Error(uErr.message);
+      return {
+        userId: p.user_id as string,
+        email: (p.email as string) ?? null,
+        fullName: (p.full_name as string) || null,
+        role: p.account_role as string,
+        lastSignInAt: u?.user?.last_sign_in_at ?? null,
+      };
+    }),
+  );
 }
 
 async function uploadBranding(accountId: string, kind: "logo" | "favicon", file: File, ext: string): Promise<string> {
@@ -158,7 +320,7 @@ export async function createTenant(input: {
 
   const redirectTo = `${tenantOrigin(cfg, input.slug)}/auth/callback?next=/reset-password`;
   const { data, error } = await db().auth.admin.inviteUserByEmail(input.ownerEmail, {
-    data: { full_name: input.ownerName },
+    data: { full_name: input.ownerName, platform_client_owner: true },
     redirectTo,
   });
   if (error || !data.user) throw new PlatformError(`Invite failed: ${error?.message ?? "no user returned"}`);

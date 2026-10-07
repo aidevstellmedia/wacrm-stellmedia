@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { format } from "date-fns";
 import { requirePlatformAdmin } from "@/lib/platform/guard";
-import { listTenants } from "@/lib/platform/tenants";
+import { listTenants, listUnassignedUsers } from "@/lib/platform/tenants";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { DeleteUnassignedUserForm } from "./unassigned-user-forms";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export default async function ClientsPage() {
   await requirePlatformAdmin();
-  const rows = await listTenants();
+  const [rows, strays] = await Promise.all([listTenants(), listUnassignedUsers()]);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -55,6 +56,38 @@ export default async function ClientsPage() {
           )}
         </TableBody>
       </Table>
+      {strays.length > 0 && (
+        <details className="rounded-md border p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-foreground">
+            Users not in any client ({strays.length})
+          </summary>
+          <p className="my-3 text-sm text-muted-foreground">
+            People who signed up but never joined a client, usually an unused invite signup.
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Signed up</TableHead>
+                <TableHead>Last sign-in</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {strays.map((u) => (
+                <TableRow key={u.accountId}>
+                  <TableCell>{u.email ?? "—"}</TableCell>
+                  <TableCell>{u.name}</TableCell>
+                  <TableCell>{format(new Date(u.createdAt), "yyyy-MM-dd")}</TableCell>
+                  <TableCell>{u.lastSignInAt ? format(new Date(u.lastSignInAt), "yyyy-MM-dd HH:mm") : "Never"}</TableCell>
+                  <TableCell><DeleteUnassignedUserForm accountId={u.accountId} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </details>
+      )}
     </div>
   );
 }

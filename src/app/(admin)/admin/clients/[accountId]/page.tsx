@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { requirePlatformAdmin } from "@/lib/platform/guard";
-import { getTenantDetail } from "@/lib/platform/tenants";
+import { format } from "date-fns";
+import { getTenantDetail, listTenantMembers } from "@/lib/platform/tenants";
 import { readPlatformConfig, tenantOrigin } from "@/lib/platform/config";
 import { brandingAssetUrl } from "@/lib/platform/branding";
 import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   AddDomainForm,
   BrandingForm,
@@ -23,6 +25,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ a
   const { accountId } = await params;
   const detail = await getTenantDetail(accountId);
   if (!detail) notFound();
+  const members = await listTenantMembers(accountId);
 
   const { row, domains, ownerEmail } = detail;
   const cfg = readPlatformConfig();
@@ -97,6 +100,30 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ a
           <li>In Nginx Proxy Manager add a Proxy Host for it → app container, and request a Let&apos;s Encrypt certificate.</li>
           <li>Add <code>https://&lt;hostname&gt;/**</code> to Supabase → Authentication → URL Configuration → Redirect URLs.</li>
         </ul>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground">Team members ({members.length})</h2>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Email</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Last sign-in</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {members.map((m) => (
+              <TableRow key={m.userId}>
+                <TableCell>{m.email ?? "—"}</TableCell>
+                <TableCell>{m.fullName ?? "—"}</TableCell>
+                <TableCell><Badge variant="outline">{m.role}</Badge></TableCell>
+                <TableCell>{m.lastSignInAt ? format(new Date(m.lastSignInAt), "yyyy-MM-dd HH:mm") : "Never"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </section>
 
       <section className="space-y-3">

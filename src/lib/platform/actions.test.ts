@@ -21,6 +21,7 @@ vi.mock("./tenants", () => {
     resendOwnerInvite: vi.fn(),
     addPlatformAdmin: vi.fn(),
     removePlatformAdmin: vi.fn(),
+    deleteUnassignedUser: vi.fn(async () => ({ email: "x@y.com" })),
     writeAudit: vi.fn(),
   };
 });
@@ -70,6 +71,13 @@ describe("platform actions", () => {
     expect(tenants.removeTenantDomain).toHaveBeenCalledWith("acc", "dom");
   });
 
+  it("deleteUnassignedUserAction passes accountId through and audits", async () => {
+    const res = await actions.deleteUnassignedUserAction(prev, fd({ accountId: "acc" }));
+    expect(res.ok).toBe(true);
+    expect(tenants.deleteUnassignedUser).toHaveBeenCalledWith("acc");
+    expect(tenants.writeAudit).toHaveBeenCalledWith("u1", "user.delete_unassigned", null, { accountId: "acc", email: "x@y.com" });
+  });
+
   it("returns PlatformError messages as state", async () => {
     vi.mocked(tenants.removePlatformAdmin).mockRejectedValueOnce(new tenants.PlatformError("Cannot remove the last platform admin."));
     const res = await actions.removeAdminAction(prev, fd({ userId: "x" }));
@@ -86,6 +94,7 @@ describe("platform actions", () => {
     "resendInviteAction",
     "addAdminAction",
     "removeAdminAction",
+    "deleteUnassignedUserAction",
   ] as const)("%s requires a platform admin", async (name) => {
     requirePlatformAdmin.mockRejectedValue(new Error("NOT_FOUND"));
     await expect(actions[name](prev, fd({ accountId: "a", status: "active" }))).rejects.toThrow("NOT_FOUND");

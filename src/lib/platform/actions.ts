@@ -165,6 +165,19 @@ export async function resendInviteAction(_: ActionState, fd: FormData): Promise<
   return res;
 }
 
+export async function deleteUnassignedUserAction(_: ActionState, fd: FormData): Promise<ActionState> {
+  const admin = await requirePlatformAdmin();
+  const accountId = str(fd, "accountId");
+  if (!accountId) return { error: "Missing account." };
+
+  const res = await run(async () => {
+    const { email } = await tenants.deleteUnassignedUser(accountId);
+    await tenants.writeAudit(admin.userId, "user.delete_unassigned", null, { accountId, email });
+  });
+  if (res.ok) revalidatePath("/admin");
+  return res;
+}
+
 export async function addAdminAction(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requirePlatformAdmin();
   const email = validateEmail(str(fd, "email"));

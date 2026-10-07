@@ -6,6 +6,9 @@ type Res = { data?: unknown; error?: { message: string; code?: string } | null }
 let handler: (c: Call) => Res | undefined;
 const calls: Call[] = [];
 const invite = vi.fn();
+const getUserById = vi.fn();
+const deleteUser = vi.fn();
+const order: string[] = [];
 
 function builder(table: string) {
   const call: Call = { table, op: "select", filters: {} };
@@ -21,6 +24,7 @@ function builder(table: string) {
   b.in = b.order = b.limit = () => b;
   const run = () => {
     calls.push(call);
+    if (call.op === "delete") order.push(`delete:${call.table}`);
     const r = handler(call) ?? {};
     return { data: r.data ?? null, error: r.error ?? null };
   };
@@ -30,14 +34,22 @@ function builder(table: string) {
 }
 
 vi.mock("./admin-client", () => ({
-  platformAdmin: () => ({ from: builder, auth: { admin: { inviteUserByEmail: invite } } }),
+  platformAdmin: () => ({ from: builder, auth: { admin: { inviteUserByEmail: invite, getUserById, deleteUser } } }),
 }));
 
-import { addTenantDomain, completeTenantSetup, createTenant, listTenants, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
+import { addTenantDomain, completeTenantSetup, createTenant, deleteUnassignedUser, listTenantMembers, listTenants, listUnassignedUsers, PlatformError, removePlatformAdmin, removeTenantDomain, setTenantStatus } from "./tenants";
 
 beforeEach(() => {
   calls.length = 0;
   invite.mockReset();
+  getUserById.mockReset();
+  deleteUser.mockReset();
+  order.length = 0;
+  getUserById.mockImplementation(async () => ({ data: { user: { user_metadata: {}, last_sign_in_at: null } }, error: null }));
+  deleteUser.mockImplementation(async () => {
+    order.push("deleteUser");
+    return { error: null };
+  });
   process.env.PLATFORM_BASE_DOMAIN = "crm.test.com";
   handler = () => undefined;
 });
@@ -61,6 +73,22 @@ describe("createTenant", () => {
     handler = (c) => (c.table === "profiles" ? { error: { message: "boom" } } : undefined);
     await expect(createTenant(input)).rejects.toThrow("boom");
     expect(invite).not.toHaveBeenCalled();
+  });
+});
+
+describe("createTenant tagging", () => {
+  it("tags the owner as a client owner on invite", async () => {
+    invite.mockResolvedValue({ data: { user: { id: "u9" } }, error: null });
+    let domainReads = 0;
+    handler = (c) => {
+      if (c.table === "accounts") return { data: { id: "a9" } };
+      // 1st read is the pre-check (free); 2nd confirms setup claimed the hostname.
+      if (c.table === "tenant_domains" && c.op === "select") return ++domainReads === 1 ? undefined : { data: { account_id: "a9" } };
+    };
+    await createTenant(input);
+    expect(invite).toHaveBeenCalledWith("o@acme.com", expect.objectContaining({
+      data: { full_name: "O", platform_client_owner: true },
+    }));
   });
 });
 
@@ -168,7 +196,133 @@ describe("listTenants", () => {
       if (c.table === "platform_admins") return { data: [{ user_id: "u-admin" }] };
       return { data: [] };
     };
+    getUserById.mockImplementation(async (id: string) => ({
+      data: { user: { user_metadata: id === "u-cli" ? { platform_client_owner: true } : {} } },
+      error: null,
+    }));
     const rows = await listTenants();
     expect(rows.map((r) => r.accountId)).toEqual(["cli", "adm-tenant"]);
+    expect(getUserById).toHaveBeenCalledTimes(1); // only the settings-less non-admin owner
+  });
+
+  it("excludes an untagged settings-less account and includes a tagged one", async () => {
+    handler = (c) => {
+      if (c.table === "accounts") {
+        return { data: [
+          { id: "stray", name: "Stray", owner_user_id: "u-stray", created_at: "2026-01-02" },
+          { id: "tagged", name: "Tagged", owner_user_id: "u-tag", created_at: "2026-01-01" },
+        ] };
+      }
+    };
+    getUserById.mockImplementation(async (id: string) => ({
+      data: { user: { user_metadata: id === "u-tag" ? { platform_client_owner: true } : {} } },
+      error: null,
+    }));
+    const rows = await listTenants();
+    expect(rows.map((r) => r.accountId)).toEqual(["tagged"]);
+    expect(rows[0].status).toBe("incomplete");
+  });
+});
+
+const acctRows = [
+  { id: "adm", name: "Admin", owner_user_id: "u-admin", created_at: "2026-01-05" },
+  { id: "stray1", name: "S1", owner_user_id: "u-s1", created_at: "2026-01-04" },
+  { id: "tagged", name: "T", owner_user_id: "u-tag", created_at: "2026-01-03" },
+  { id: "set", name: "Set", owner_user_id: "u-set", created_at: "2026-01-02" },
+  { id: "stray2", name: "S2", owner_user_id: "u-s2", created_at: "2026-01-01" },
+];
+
+describe("listUnassignedUsers", () => {
+  it("returns exactly the untagged, non-admin, settings-less accounts", async () => {
+    handler = (c) => {
+      if (c.table === "accounts") return { data: acctRows };
+      if (c.table === "tenant_settings") return { data: [{ account_id: "set" }] };
+      if (c.table === "platform_admins") return { data: [{ user_id: "u-admin" }] };
+      if (c.table === "profiles") return { data: [{ user_id: "u-s1", email: "s1@x.com" }] };
+    };
+    getUserById.mockImplementation(async (id: string) => ({
+      data: { user: { user_metadata: id === "u-tag" ? { platform_client_owner: true } : {}, last_sign_in_at: id === "u-s1" ? "2026-02-01T10:00:00Z" : null } },
+      error: null,
+    }));
+    const rows = await listUnassignedUsers();
+    expect(rows).toEqual([
+      { accountId: "stray1", ownerUserId: "u-s1", email: "s1@x.com", name: "S1", createdAt: "2026-01-04", lastSignInAt: "2026-02-01T10:00:00Z" },
+      { accountId: "stray2", ownerUserId: "u-s2", email: null, name: "S2", createdAt: "2026-01-01", lastSignInAt: null },
+    ]);
+  });
+});
+
+describe("deleteUnassignedUser", () => {
+  const stray = (over: Partial<Record<string, unknown>> = {}) => (c: Call): Res | undefined => {
+    if (c.table === "accounts") return { data: { id: "a1", owner_user_id: "u1" } };
+    if (c.table === "profiles") return { data: over.profiles ?? [{ user_id: "u1", email: "x@y.com" }] };
+    if (c.table === "tenant_settings") return { data: over.settings ?? null };
+    if (c.table === "platform_admins") return { data: over.admin ?? null };
+    if (over.dataTable === c.table) return { data: [{ account_id: "a1" }] };
+  };
+  const deleted = () => calls.some((c) => c.op === "delete") || deleteUser.mock.calls.length > 0;
+
+  it("refuses when tenant_settings exists", async () => {
+    handler = stray({ settings: { account_id: "a1" } });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow("This account belongs to a client and can't be deleted here.");
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses when the owner is tagged", async () => {
+    handler = stray();
+    getUserById.mockImplementation(async () => ({ data: { user: { user_metadata: { platform_client_owner: true } } }, error: null }));
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow(/belongs to a client/);
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses when the owner is a platform admin", async () => {
+    handler = stray({ admin: { user_id: "u1" } });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow(/belongs to a client/);
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses when data is present", async () => {
+    handler = stray({ dataTable: "contacts" });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow("This account has data and can't be deleted.");
+    expect(deleted()).toBe(false);
+  });
+
+  it("refuses when there is more than one profile", async () => {
+    handler = stray({ profiles: [{ user_id: "u1" }, { user_id: "u2" }] });
+    await expect(deleteUnassignedUser("a1")).rejects.toThrow(PlatformError);
+    expect(deleted()).toBe(false);
+  });
+
+  it("deletes the account first, then the auth user", async () => {
+    handler = stray();
+    const res = await deleteUnassignedUser("a1");
+    expect(res).toEqual({ email: "x@y.com" });
+    expect(order).toEqual(["delete:accounts", "deleteUser"]);
+    expect(deleteUser).toHaveBeenCalledWith("u1");
+    expect(calls.find((c) => c.op === "delete")?.filters.id).toBe("a1");
+  });
+});
+
+describe("listTenantMembers", () => {
+  it("orders owner > admin > agent > viewer then email and maps lastSignInAt", async () => {
+    handler = (c) =>
+      c.table === "profiles"
+        ? { data: [
+            { user_id: "v", email: "a@x.com", full_name: "V", account_role: "viewer" },
+            { user_id: "g2", email: "z@x.com", full_name: "", account_role: "agent" },
+            { user_id: "o", email: "o@x.com", full_name: "O", account_role: "owner" },
+            { user_id: "g1", email: "b@x.com", full_name: "G1", account_role: "agent" },
+            { user_id: "ad", email: "m@x.com", full_name: "AD", account_role: "admin" },
+          ] }
+        : undefined;
+    getUserById.mockImplementation(async (id: string) => ({
+      data: { user: { last_sign_in_at: id === "o" ? "2026-03-01T00:00:00Z" : null } },
+      error: null,
+    }));
+    const rows = await listTenantMembers("a1");
+    expect(rows.map((r) => r.userId)).toEqual(["o", "ad", "g1", "g2", "v"]);
+    expect(rows[0].lastSignInAt).toBe("2026-03-01T00:00:00Z");
+    expect(rows[1].lastSignInAt).toBeNull();
+    expect(rows[3].fullName).toBeNull();
   });
 });
